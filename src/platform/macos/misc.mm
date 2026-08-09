@@ -15,12 +15,14 @@
 #include <cstring>
 #include <fcntl.h>
 #include <ifaddrs.h>
+#include <mutex>
 #include <vector>
 
 // platform includes
 #include <arpa/inet.h>
 #include <dlfcn.h>
 #include <Foundation/Foundation.h>
+#include <IOKit/pwr_mgt/IOPMLib.h>
 #include <mach-o/dyld.h>
 #include <net/if_dl.h>
 #include <pwd.h>
@@ -55,6 +57,36 @@ namespace platf {
 
   namespace {
     auto screen_capture_allowed = std::atomic<bool> {false};
+
+    std::mutex streaming_power_assertion_mutex;
+    IOPMAssertionID streaming_display_sleep_assertion = kIOPMNullAssertionID;
+    IOPMAssertionID streaming_user_activity_assertion = kIOPMNullAssertionID;
+
+    void release_power_assertion(IOPMAssertionID &assertion, const std::string_view name) {
+      if (assertion == kIOPMNullAssertionID) {
+        return;
+      }
+
+      const IOReturn status = IOPMAssertionRelease(assertion);
+      if (status != kIOReturnSuccess) {
+        BOOST_LOG(warning) << "Failed to release macOS "sv << name << " power assertion: IOReturn "sv << status;
+      }
+      assertion = kIOPMNullAssertionID;
+    }
+
+    void declare_remote_user_activity() {
+      const IOReturn status = IOPMAssertionDeclareUserActivity(
+        CFSTR("Lumina remote streaming connection"),
+        kIOPMUserActiveRemote,
+        &streaming_user_activity_assertion
+      );
+      if (status != kIOReturnSuccess) {
+        streaming_user_activity_assertion = kIOPMNullAssertionID;
+        BOOST_LOG(warning) << "Failed to wake the display for remote streaming: IOReturn "sv << status;
+      } else {
+        BOOST_LOG(info) << "Declared remote user activity to wake the macOS display"sv;
+      }
+    }
   }  // namespace
 
   // Return whether screen capture is allowed for this process.
@@ -250,12 +282,42 @@ namespace platf {
     // Unimplemented
   }
 
+  void streaming_will_prepare() {
+    std::lock_guard lock {streaming_power_assertion_mutex};
+    declare_remote_user_activity();
+  }
+
   void streaming_will_start() {
-    // Nothing to do
+    std::lock_guard lock {streaming_power_assertion_mutex};
+
+    if (streaming_display_sleep_assertion == kIOPMNullAssertionID) {
+      const IOReturn status = IOPMAssertionCreateWithName(
+        kIOPMAssertionTypePreventUserIdleDisplaySleep,
+        kIOPMAssertionLevelOn,
+        CFSTR("Lumina remote streaming session"),
+        &streaming_display_sleep_assertion
+      );
+      if (status != kIOReturnSuccess) {
+        streaming_display_sleep_assertion = kIOPMNullAssertionID;
+        BOOST_LOG(warning) << "Failed to prevent display sleep during streaming: IOReturn "sv << status;
+      } else {
+        BOOST_LOG(info) << "Preventing macOS display sleep while streaming"sv;
+      }
+    }
+
+    // A display-sleep assertion keeps an active display awake, but does not
+    // power on a display that is already asleep. Declare remote user activity
+    // as well so a new Moonlight connection can recover the capture pipeline.
+    declare_remote_user_activity();
   }
 
   void streaming_will_stop() {
     virtual_display_destroy();
+
+    std::lock_guard lock {streaming_power_assertion_mutex};
+    release_power_assertion(streaming_user_activity_assertion, "remote-user activity"sv);
+    release_power_assertion(streaming_display_sleep_assertion, "display-sleep prevention"sv);
+    BOOST_LOG(info) << "Released macOS streaming power assertions"sv;
   }
 
   std::uint32_t virtual_display_create(int width, int height, int fps) {

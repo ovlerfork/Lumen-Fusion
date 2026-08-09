@@ -1990,15 +1990,17 @@ namespace stream {
       session.audioThread = std::thread {audioThread, &session};
       session.videoThread = std::thread {videoThread, &session};
 
-      session.state.store(state_e::RUNNING, std::memory_order_relaxed);
-
-      // If this is the first session, invoke the platform callbacks
+      // Prepare the platform before allowing the capture threads to run. On
+      // macOS this wakes an idle display and prevents it from sleeping for the
+      // duration of the streaming session.
       if (++running_sessions == 1) {
         platf::streaming_will_start();
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
         system_tray::update_tray_playing(proc::proc.get_last_run_app_name());
 #endif
       }
+
+      session.state.store(state_e::RUNNING, std::memory_order_relaxed);
 
       return 0;
     }

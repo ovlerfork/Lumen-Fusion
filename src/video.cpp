@@ -9,6 +9,12 @@
 #include <map>
 #include <thread>
 
+#ifdef __APPLE__
+  // platform includes
+  #include <dlfcn.h>
+  #include <VideoToolbox/VideoToolbox.h>
+#endif
+
 // lib includes
 #include <boost/pointer_cast.hpp>
 
@@ -39,9 +45,168 @@ extern "C" {
 
 using namespace std::literals;
 
+#ifdef __APPLE__
+namespace {
+  using vt_session_create_fn = OSStatus (*)(
+    CFAllocatorRef,
+    int32_t,
+    int32_t,
+    CMVideoCodecType,
+    CFDictionaryRef,
+    CFDictionaryRef,
+    CFAllocatorRef,
+    VTCompressionOutputCallback,
+    void *,
+    VTCompressionSessionRef *
+  );
+
+  void set_videotoolbox_max_frame_delay(VTCompressionSessionRef session) {
+    const int max_frame_delay = config::video.vt.vt_max_frame_delay;
+    if (max_frame_delay < 0) {
+      return;
+    }
+
+    CFDictionaryRef supported_properties = nullptr;
+    OSStatus status = VTSessionCopySupportedPropertyDictionary(session, &supported_properties);
+    if (status != noErr || !supported_properties) {
+      BOOST_LOG(warning)
+        << "Cannot query VideoToolbox properties while applying MaxFrameDelayCount="sv
+        << max_frame_delay << ": OSStatus "sv << status << "; using the encoder default"sv;
+      return;
+    }
+
+    const auto property_description = static_cast<CFDictionaryRef>(CFDictionaryGetValue(
+      supported_properties,
+      kVTCompressionPropertyKey_MaxFrameDelayCount
+    ));
+    if (!property_description || CFGetTypeID(property_description) != CFDictionaryGetTypeID()) {
+      CFRelease(supported_properties);
+      BOOST_LOG(warning)
+        << "VideoToolbox MaxFrameDelayCount="sv << max_frame_delay
+        << " is unsupported by the selected encoder; using the encoder default"sv;
+      return;
+    }
+
+    const auto read_write_status = CFDictionaryGetValue(
+      property_description,
+      kVTPropertyReadWriteStatusKey
+    );
+    const bool read_only = read_write_status && CFEqual(
+      read_write_status,
+      kVTPropertyReadWriteStatus_ReadOnly
+    );
+    CFRelease(supported_properties);
+
+    if (read_only) {
+      BOOST_LOG(warning)
+        << "VideoToolbox MaxFrameDelayCount="sv << max_frame_delay
+        << " cannot be applied because the selected encoder exposes it as read-only; using the encoder default"sv;
+      return;
+    }
+
+    CFNumberRef requested_value = CFNumberCreate(
+      kCFAllocatorDefault,
+      kCFNumberIntType,
+      &max_frame_delay
+    );
+    if (!requested_value) {
+      BOOST_LOG(warning)
+        << "Cannot allocate VideoToolbox MaxFrameDelayCount property value; using the encoder default"sv;
+      return;
+    }
+
+    status = VTSessionSetProperty(
+      session,
+      kVTCompressionPropertyKey_MaxFrameDelayCount,
+      requested_value
+    );
+    CFRelease(requested_value);
+    if (status != noErr) {
+      BOOST_LOG(warning)
+        << "VideoToolbox rejected MaxFrameDelayCount="sv << max_frame_delay
+        << " with OSStatus "sv << status << "; using the encoder default"sv;
+      return;
+    }
+
+    CFTypeRef applied_value = nullptr;
+    status = VTSessionCopyProperty(
+      session,
+      kVTCompressionPropertyKey_MaxFrameDelayCount,
+      kCFAllocatorDefault,
+      &applied_value
+    );
+    if (status != noErr || !applied_value || CFGetTypeID(applied_value) != CFNumberGetTypeID()) {
+      if (applied_value) {
+        CFRelease(applied_value);
+      }
+      BOOST_LOG(warning)
+        << "Cannot verify VideoToolbox MaxFrameDelayCount="sv << max_frame_delay
+        << ": OSStatus "sv << status;
+      return;
+    }
+
+    int actual_value = -1;
+    const bool converted = CFNumberGetValue(
+      static_cast<CFNumberRef>(applied_value),
+      kCFNumberIntType,
+      &actual_value
+    );
+    CFRelease(applied_value);
+
+    if (!converted || actual_value != max_frame_delay) {
+      BOOST_LOG(warning)
+        << "VideoToolbox MaxFrameDelayCount verification mismatch: requested "sv
+        << max_frame_delay << ", actual "sv << actual_value;
+      return;
+    }
+
+    BOOST_LOG(info) << "Applied VideoToolbox MaxFrameDelayCount="sv << actual_value << " from Lumina"sv;
+  }
+}  // namespace
+
+extern "C" OSStatus VTCompressionSessionCreate(
+  CFAllocatorRef allocator,
+  int32_t width,
+  int32_t height,
+  CMVideoCodecType codec_type,
+  CFDictionaryRef encoder_specification,
+  CFDictionaryRef source_image_buffer_attributes,
+  CFAllocatorRef compressed_data_allocator,
+  VTCompressionOutputCallback output_callback,
+  void *output_callback_refcon,
+  VTCompressionSessionRef *compression_session_out
+) {
+  static const auto original_create = reinterpret_cast<vt_session_create_fn>(
+    dlsym(RTLD_NEXT, "VTCompressionSessionCreate")
+  );
+  if (!original_create) {
+    BOOST_LOG(error) << "Failed to resolve the system VTCompressionSessionCreate function"sv;
+    return kVTInvalidSessionErr;
+  }
+
+  const OSStatus status = original_create(
+    allocator,
+    width,
+    height,
+    codec_type,
+    encoder_specification,
+    source_image_buffer_attributes,
+    compressed_data_allocator,
+    output_callback,
+    output_callback_refcon,
+    compression_session_out
+  );
+  if (status == noErr && compression_session_out && *compression_session_out) {
+    set_videotoolbox_max_frame_delay(*compression_session_out);
+  }
+  return status;
+}
+#endif
+
 namespace video {
 
   namespace {
+
     /**
      * @brief Check if we can allow probing for the encoders.
      * @return True if there should be no issues with the probing, false if we should prevent it.

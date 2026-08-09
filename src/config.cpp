@@ -477,10 +477,11 @@ namespace config {
     },  // amd
 
     {
-      0,
-      0,
-      1,
-      -1,
+      0,  // allow software encoding
+      0,  // require software encoding
+      1,  // realtime encoding
+      -1,  // maximum frame delay (automatic)
+      -1,  // entropy coder (automatic)
     },  // vt
 
     {
@@ -1146,6 +1147,7 @@ namespace config {
     int_f(vars, "vt_software", video.vt.vt_allow_sw, vt::allow_software_from_view);
     int_f(vars, "vt_software", video.vt.vt_require_sw, vt::force_software_from_view);
     int_f(vars, "vt_realtime", video.vt.vt_realtime, vt::rt_from_view);
+    int_between_f(vars, "vt_max_frame_delay", video.vt.vt_max_frame_delay, {-1, std::numeric_limits<int>::max()});
 
     bool_f(vars, "vaapi_strict_rc_buffer", video.vaapi.strict_rc_buffer);
 

@@ -379,6 +379,7 @@ namespace platf {
     std::int32_t row_pitch {};
 
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
+    bool frame_repeated {false};
 
     virtual ~img_t() = default;
   };
@@ -622,7 +623,10 @@ namespace platf {
 
   void enable_mouse_keys();
 
-  // Allow OS-specific actions to be taken to prepare for streaming
+  // Allow OS-specific actions to be taken to prepare for streaming.
+  // streaming_will_prepare() runs before display configuration and encoder
+  // probing, while streaming_will_start()/stop() cover the active session.
+  void streaming_will_prepare();
   void streaming_will_start();
   void streaming_will_stop();
 

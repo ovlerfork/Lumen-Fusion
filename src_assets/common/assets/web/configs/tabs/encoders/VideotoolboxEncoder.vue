@@ -37,6 +37,12 @@ const config = ref(props.config)
               v-model="config.vt_realtime"
               default="true"
     ></Checkbox>
+    <div class="mb-3">
+      <label for="vt_max_frame_delay" class="form-label">{{ $t('config.vt_max_frame_delay') }}</label>
+      <input type="number" min="-1" class="form-control" id="vt_max_frame_delay" placeholder="-1"
+             v-model="config.vt_max_frame_delay" />
+      <div class="form-text">{{ $t('config.vt_max_frame_delay_desc') }}</div>
+    </div>
   </div>
 </template>
 
