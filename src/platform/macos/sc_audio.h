@@ -22,6 +22,7 @@ API_AVAILABLE(macos(12.3))
 @property (nonatomic, strong) dispatch_queue_t audioQueue;
 @property (nonatomic, strong) NSCondition *samplesArrivedSignal;
 @property (nonatomic, assign) BOOL isCapturing;
+@property (nonatomic, assign) BOOL bufferInitialized;
 
 // Audio sample buffer (circular buffer for thread-safe access)
 // Use getAudioBuffer to get a pointer to this buffer

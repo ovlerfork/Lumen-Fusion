@@ -136,7 +136,7 @@ namespace platf {
           return tap_mic;
         }
         BOOST_LOG(error) << "Core Audio Tap setup failed; audio_sink=audiotap is unavailable"sv;
-        [tap_mic->av_audio_capture release];
+        // av_mic_t owns this object and releases it when tap_mic is destroyed.
         return nullptr;
       }
 
@@ -154,7 +154,7 @@ namespace platf {
               return sc_mic;
             } else {
               BOOST_LOG(warning) << "ScreenCaptureKit audio capture failed, falling back to other methods"sv;
-              [sc_mic->sc_audio_capture release];
+              // sc_mic_t owns this object and releases it when sc_mic is destroyed.
             }
           }
         }

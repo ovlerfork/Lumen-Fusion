@@ -31,6 +31,7 @@ API_AVAILABLE(macos(12.3))
     self = [super init];
     if (self) {
         self.isCapturing = NO;
+        self.bufferInitialized = NO;
 
         dispatch_queue_attr_t qos = dispatch_queue_attr_make_with_qos_class(
             DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, DISPATCH_QUEUE_PRIORITY_HIGH);
@@ -58,31 +59,41 @@ API_AVAILABLE(macos(12.3))
     }
 
     // Initialize the circular buffer
-    TPCircularBufferInit(&_audioSampleBuffer, kAudioBufferLength);
-
-    // Get shareable content
-    dispatch_semaphore_t initSemaphore = dispatch_semaphore_create(0);
-    __block BOOL initSuccess = NO;
-
-    [SCShareableContent getShareableContentWithCompletionHandler:^(SCShareableContent *content, NSError *error) {
-        if (error) {
-            NSLog(@"[SCAudioCapture] Failed to get shareable content: %@", error.localizedDescription);
-        } else {
-            self.shareableContent = content;
-            initSuccess = YES;
-        }
-        dispatch_semaphore_signal(initSemaphore);
-    }];
-
-    long result = dispatch_semaphore_wait(initSemaphore, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC));
-    if (result != 0 || !initSuccess) {
-        NSLog(@"[SCAudioCapture] Timeout or failure getting shareable content");
+    if (!TPCircularBufferInit(&_audioSampleBuffer, kAudioBufferLength)) {
+        NSLog(@"[SCAudioCapture] Failed to initialize audio buffer");
         return -1;
     }
+    self.bufferInitialized = YES;
 
-    // We need at least one display to create a content filter
+    // A newly created virtual display can take a short time to appear in
+    // ScreenCaptureKit. Refresh shareable content instead of failing the audio
+    // session based on a single startup-time snapshot.
+    const int maxDisplayDiscoveryAttempts = 10;
+    for (int attempt = 1; attempt <= maxDisplayDiscoveryAttempts; ++attempt) {
+        dispatch_semaphore_t initSemaphore = dispatch_semaphore_create(0);
+        __block BOOL initSuccess = NO;
+
+        [SCShareableContent getShareableContentWithCompletionHandler:^(SCShareableContent *content, NSError *error) {
+            if (!error) {
+                self.shareableContent = content;
+                initSuccess = YES;
+            }
+            dispatch_semaphore_signal(initSemaphore);
+        }];
+
+        long result = dispatch_semaphore_wait(initSemaphore, dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC));
+        if (result == 0 && initSuccess && self.shareableContent.displays.count > 0) {
+            break;
+        }
+
+        if (attempt < maxDisplayDiscoveryAttempts) {
+            [NSThread sleepForTimeInterval:0.25];
+        }
+    }
+
+    // We need at least one display to create a content filter.
     if (self.shareableContent.displays.count == 0) {
-        NSLog(@"[SCAudioCapture] No displays available");
+        NSLog(@"[SCAudioCapture] No displays available after retries");
         return -1;
     }
 
@@ -138,7 +149,7 @@ API_AVAILABLE(macos(12.3))
         dispatch_semaphore_signal(startSemaphore);
     }];
 
-    result = dispatch_semaphore_wait(startSemaphore, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC));
+    long result = dispatch_semaphore_wait(startSemaphore, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC));
     if (result != 0 || !startSuccess) {
         NSLog(@"[SCAudioCapture] Timeout or failure starting capture");
         return -1;
@@ -149,10 +160,6 @@ API_AVAILABLE(macos(12.3))
 }
 
 - (void)stopCapture {
-    if (!self.isCapturing) {
-        return;
-    }
-
     self.isCapturing = NO;
 
     if (self.stream) {
@@ -173,7 +180,10 @@ API_AVAILABLE(macos(12.3))
     [self.samplesArrivedSignal signal];
 
     // Clean up the buffer
-    TPCircularBufferCleanup(&_audioSampleBuffer);
+    if (self.bufferInitialized) {
+        TPCircularBufferCleanup(&_audioSampleBuffer);
+        self.bufferInitialized = NO;
+    }
 }
 
 #pragma mark - SCStreamDelegate
