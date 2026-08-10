@@ -17,7 +17,6 @@ node_modules/
 *.tmp
 
 # Local development helpers and reports
-/dev.sh
 /docs/sunshine-v2026.516.143833-gap-report.md
 
 # Local installer customization
