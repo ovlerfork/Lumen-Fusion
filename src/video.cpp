@@ -485,8 +485,8 @@ namespace video {
     avcodec_encode_session_t(avcodec_encode_session_t &&other) noexcept = default;
 
     ~avcodec_encode_session_t() {
-      // Flush any remaining frames in the encoder
-      if (avcodec_send_frame(avcodec_ctx.get(), nullptr) == 0) {
+      // Flush any remaining frames in the encoder if the encoder started up (frame num > 0)
+      if (avcodec_ctx->frame_num > 0 && avcodec_send_frame(avcodec_ctx.get(), nullptr) == 0) {
         packet_raw_avcodec pkt;
         while (avcodec_receive_packet(avcodec_ctx.get(), pkt.av_packet) == 0);
       }
@@ -1580,8 +1580,7 @@ namespace video {
                   continue;
                 }
 
-                while (capture_ctx->images->peek()) {
-                  capture_ctx->images->pop();
+                while (capture_ctx->images->try_pop()) {
                 }
 
                 ++capture_ctx;
@@ -2276,17 +2275,6 @@ namespace video {
     }
 
     while (true) {
-      // Break out of the encoding loop if any of the following are true:
-      // a) The stream is ending
-      // b) Sunshine is quitting
-      // c) The capture side is waiting to reinit and we've encoded at least one frame
-      //
-      // If we have to reinit before we have received any captured frames, we will encode
-      // the blank dummy frame just to let Moonlight know that we're alive.
-      if (shutdown_event->peek() || !images->running() || (reinit_event.peek() && frame_nr > 1)) {
-        break;
-      }
-
       bool requested_idr_frame = false;
 
       while (invalidate_ref_frames_events->peek()) {
@@ -2336,6 +2324,19 @@ namespace video {
         } else if (!images->running()) {
           break;
         }
+      }
+
+      // Break out of the encoding loop if any of the following are true:
+      // a) The stream is ending
+      // b) Sunshine is quitting
+      // c) The capture side is waiting to reinit and we've encoded at least one frame
+      //
+      // If we have to reinit before we have received any captured frames, we will encode
+      // the blank dummy frame just to let Moonlight know that we're alive.
+      // Ensure that this check occurs as close as possible to the encode call to prevent packets
+      // in flight after encoder teardown.
+      if (shutdown_event->peek() || !images->running() || (reinit_event.peek() && frame_nr > 1)) {
+        break;
       }
 
       if (encode(frame_nr++, *session, packets, channel_data, frame_timestamp

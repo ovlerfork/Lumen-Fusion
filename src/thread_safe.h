@@ -38,6 +38,21 @@ namespace safe {
       _cv.notify_all();
     }
 
+    /**
+     * @brief Try to remove and return the next queued item without any further wait
+     *
+     * @return Removed queue item, or empty result when the queue is stopped or empty.
+     */
+    status_t try_pop() {
+      std::lock_guard lg {_lock};
+      if (!_status) {
+        return util::false_v<status_t>;
+      }
+      auto val = std::move(_status);
+      _status = util::false_v<status_t>;
+      return val;
+    }
+
     // pop and view should not be used interchangeably
     status_t pop() {
       std::unique_lock ul {_lock};
@@ -72,7 +87,7 @@ namespace safe {
       }
 
       auto val = std::move(_status);
-      _status.reset();
+      _status = util::false_v<status_t>;
       return val;
     }
 
@@ -438,7 +453,7 @@ namespace safe {
 
       if (!_count) {
         new (_object_buf.data()) element_type;
-        if (_construct(*reinterpret_cast<element_type *>(_object_buf.data()))) {
+        if (_construct(*reinterpret_cast<element_type *>(_object_buf.data())) != 0) {
           return ptr_t {nullptr};
         }
       }

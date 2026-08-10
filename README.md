@@ -177,9 +177,17 @@ max_bitrate = 80000
 # Virtual display — disabled by default
 virtual_display = disabled
 
+# Optional packet-size cap for low-MTU links; 0 disables the cap
+packetsize = 0
+
 # UPnP port mapping for remote access
 upnp = enabled
 ```
+
+`packetsize` can lower a Moonlight client's requested video packet size to avoid
+fragmentation over a VPN or other low-MTU path. Valid values are `0` (disabled)
+or `200` through `65535`; values above `1456` may require jumbo frames. A useful
+starting point is the path's maximum UDP payload minus 16 bytes.
 
 ### Streaming Performance Diagnostics
 
