@@ -16,7 +16,7 @@ COMMIT=$(git rev-parse --short HEAD)
 export BUILD_VERSION BRANCH COMMIT
 
 required_formulas=(
-  "cmake" "node" "pkgconf" "icu4c@78" "miniupnpc" "openssl@3" "opus"
+  "cmake" "node" "pkgconf" "icu4c@78" "miniupnpc" "openssl@3" "opus" "qtbase" "qtsvg"
 )
 
 function _usage() {
@@ -34,8 +34,9 @@ Options:
   --build-docs             Build documentation.
   --build-tests            Build tests.
 
-The ZIP contains lumina, vd_helper, assets, and hid_entitlements.plist.
-It is intentionally unsigned so users can opt into local ad-hoc HID signing.
+The ZIP contains lumina, vd_helper, assets, the Qt tray runtime, and
+hid_entitlements.plist. Its runtime receives only ordinary ad-hoc signatures;
+users opt into the restricted HID entitlement by re-signing locally.
 EOF
   exit "$exit_code"
 }
@@ -56,6 +57,8 @@ function run_step_cmake() {
     "-DICU_ROOT=$(brew --prefix icu4c@78 2>/dev/null)"
     "-DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3 2>/dev/null)"
     "-DOpus_ROOT_DIR=$(brew --prefix opus 2>/dev/null)"
+    "-DCMAKE_PREFIX_PATH=$(brew --prefix qtbase 2>/dev/null);$(brew --prefix qtsvg 2>/dev/null)"
+    "-DQt6Svg_DIR=$(brew --prefix qtsvg 2>/dev/null)/lib/cmake/Qt6Svg"
     "-DSUNSHINE_ASSETS_DIR=assets"
     "-DSUNSHINE_BUILD_HOMEBREW=OFF"
     "-DSUNSHINE_ENABLE_TRAY=ON"

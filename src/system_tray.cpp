@@ -37,7 +37,7 @@
   // lib includes
   #include <boost/filesystem.hpp>
   #include <boost/process/v1/environment.hpp>
-  #include <tray/src/tray.h>
+  #include <tray.h>
 
   // local includes
   #include "confighttp.h"
@@ -56,6 +56,32 @@ namespace system_tray {
   void tray_open_ui_cb([[maybe_unused]] struct tray_menu *item) {
     BOOST_LOG(info) << "Opening UI from system tray"sv;
     launch_ui();
+  }
+
+  /**
+   * @brief Forward Qt diagnostics to Lumina's Boost.Log sink.
+   * @param level Log level: 0=debug, 1=info, 2=warning, 3=error.
+   * @param msg The Qt message.
+   */
+  static void qt_log_to_boost(int level, const char *msg) {
+    if (msg == nullptr) {
+      return;
+    }
+
+    switch (level) {
+      case 0:
+        BOOST_LOG(debug) << "Qt: " << msg;
+        break;
+      case 1:
+        BOOST_LOG(info) << "Qt: " << msg;
+        break;
+      case 2:
+        BOOST_LOG(warning) << "Qt: " << msg;
+        break;
+      default:
+        BOOST_LOG(error) << "Qt: " << msg;
+        break;
+    }
   }
 
   void tray_reset_display_device_config_cb([[maybe_unused]] struct tray_menu *item) {
@@ -85,10 +111,25 @@ namespace system_tray {
     lifetime::exit_sunshine(0, true);
   }
 
+  #if defined(__APPLE__) || defined(__MACH__)
+  /**
+   * @brief Let Qt/macOS present the assigned native context menu exactly once.
+   *
+   * QSystemTrayIcon opens its context menu on mouse press on macOS. Supplying
+   * this callback prevents the tray library's activation handler from also
+   * calling QMenu::popup() for the same click.
+   */
+  static void tray_native_context_menu_cb([[maybe_unused]] struct tray *item) {
+  }
+  #endif
+
   // Tray menu
   static struct tray tray = {
     .icon = TRAY_ICON,
     .tooltip = PROJECT_NAME,
+  #if defined(__APPLE__) || defined(__MACH__)
+    .cb = tray_native_context_menu_cb,
+  #endif
     .menu =
       (struct tray_menu[]) {
         // todo - use boost/locale to translate menu strings
@@ -105,6 +146,25 @@ namespace system_tray {
     .iconPathCount = 4,
     .allIconPaths = {TRAY_ICON, TRAY_ICON_LOCKED, TRAY_ICON_PLAYING, TRAY_ICON_PAUSING},
   };
+
+  #ifdef SUNSHINE_TESTS
+  const struct tray &tray_data_for_testing() {
+    return tray;
+  }
+
+  bool tray_initialized_for_testing() {
+    return tray_initialized;
+  }
+
+  void reset_tray_data_for_testing() {
+    tray.icon = tray.allIconPaths[0];
+    tray.tooltip = PROJECT_NAME;
+    tray.notification_icon = nullptr;
+    tray.notification_text = nullptr;
+    tray.notification_title = nullptr;
+    tray.notification_cb = nullptr;
+  }
+  #endif
 
   int init_tray() {
   #ifdef _WIN32
@@ -168,6 +228,9 @@ namespace system_tray {
       Sleep(1000);
     }
   #endif
+
+    tray_set_log_callback(qt_log_to_boost);
+    tray_set_app_info(PROJECT_NAME, PROJECT_NAME, PROJECT_FQDN);
 
     if (tray_init(&tray) < 0) {
       BOOST_LOG(warning) << "Failed to create system tray"sv;

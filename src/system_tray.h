@@ -4,6 +4,8 @@
  */
 #pragma once
 
+#include <string>
+
 /**
  * @brief Handles the system tray icon and notification system.
  */
@@ -78,4 +80,21 @@ namespace system_tray {
    * @return 0 if initialization was successful, non-zero otherwise.
    */
   int init_tray_threaded();
+
+#ifdef SUNSHINE_TESTS
+  /**
+   * @brief Get the tray data used by the system tray implementation.
+   */
+  const struct tray &tray_data_for_testing();
+
+  /**
+   * @brief Check whether the tray has initialized.
+   */
+  bool tray_initialized_for_testing();
+
+  /**
+   * @brief Restore persistent tray data between tests.
+   */
+  void reset_tray_data_for_testing();
+#endif
 }  // namespace system_tray
