@@ -26,12 +26,7 @@
 #include "platform/common.h"
 #include "rtsp.h"
 
-// platform-specific includes
-#ifdef _WIN32
-  #include <display_device/windows/settings_manager.h>
-  #include <display_device/windows/win_api_layer.h>
-  #include <display_device/windows/win_display_device.h>
-#endif
+#include <display_device/factory.h>
 
 namespace display_device {
   namespace {
@@ -643,27 +638,14 @@ namespace display_device {
       return true;
     }
 
-    /**
-     * @brief Construct a settings manager interface to manage display device settings.
-     * @param persistence_filepath File location for saving persistent state.
-     * @param video_config User's video related configuration.
-     * @return An interface or nullptr if the OS does not support the interface.
-     */
-    std::unique_ptr<SettingsManagerInterface> make_settings_manager([[maybe_unused]] const std::filesystem::path &persistence_filepath, [[maybe_unused]] const config::video_t &video_config) {
-#ifdef _WIN32
-      return std::make_unique<SettingsManager>(
-        std::make_shared<WinDisplayDevice>(std::make_shared<WinApiLayer>()),
-        std::make_shared<sunshine_audio_context_t>(),
-        std::make_unique<PersistentState>(
-          std::make_shared<FileSettingsPersistence>(persistence_filepath)
-        ),
-        WinWorkarounds {
-          .m_hdr_blank_delay = video_config.dd.wa.hdr_toggle_delay != std::chrono::milliseconds::zero() ? std::make_optional(video_config.dd.wa.hdr_toggle_delay) : std::nullopt
-        }
-      );
-#else
-      return nullptr;
-#endif
+    std::unique_ptr<SettingsManagerInterface> make_settings_manager(const std::filesystem::path &persistence_filepath, const config::video_t &video_config) {
+      SettingsManagerFactoryConfig config {
+        .m_audio_context_api = std::make_shared<sunshine_audio_context_t>(),
+        .m_settings_persistence_api = std::make_shared<FileSettingsPersistence>(persistence_filepath),
+        .m_throw_on_persistence_load_error = false,
+        .m_hdr_blank_delay = video_config.dd.wa.hdr_toggle_delay != std::chrono::milliseconds::zero() ? std::make_optional(video_config.dd.wa.hdr_toggle_delay) : std::nullopt
+      };
+      return display_device::makeSettingsManager(config);
     }
 
     /**
@@ -692,7 +674,7 @@ namespace display_device {
         scheduler_option.m_execution = SchedulerOptions::Execution::ScheduledOnly;
       }
 
-      DD_DATA.sm_instance->schedule([try_once = (option == revert_option_e::try_once), tried_out_devices = std::set<std::string> {}](auto &settings_iface, auto &stop_token) mutable {
+      DD_DATA.sm_instance->schedule([try_once = (option == revert_option_e::try_once), tried_out_devices = display_device::StringSet {}](auto &settings_iface, auto &stop_token) mutable {
         if (try_once) {
           std::ignore = settings_iface.revertSettings();
           stop_token.requestStop();
@@ -701,7 +683,7 @@ namespace display_device {
 
         auto available_devices {[&settings_iface]() {
           const auto devices {settings_iface.enumAvailableDevices()};
-          std::set<std::string> parsed_devices;
+          display_device::StringSet parsed_devices;
 
           std::transform(
             std::begin(devices),

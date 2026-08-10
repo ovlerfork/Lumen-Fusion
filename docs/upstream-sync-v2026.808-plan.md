@@ -219,11 +219,68 @@ Validation completed:
 Do not replace Lumina's macOS build files wholesale, because upstream does not
 know about its virtual display, ScreenCaptureKit, or HID sources.
 
+#### Phase 4 review checkpoint
+
+Implemented on 2026-08-10 and left uncommitted for review. The applicable
+upstream changes are represented with Lumina's command-line macOS distribution
+kept as the build-system baseline:
+
+- `7df8c62e` is ported with its five-generation startup log rotation and focused
+  filesystem tests. Lumina's separately compiled performance logger remains
+  unchanged and is still disabled by default.
+- `089f15d4` supplies the Qt tray implementation and CMake target. Lumina's
+  product identity, icons, menu wording, raw executable layout, and local
+  install workflow are layered on top; Sunshine's `.app` bundle workflow was
+  not adopted.
+- `22f7a773` and `49e56977` are ported semantically to the raw ZIP: relocated
+  dylibs are signed first, only valid top-level framework bundles are selected,
+  frameworks are signed after dylibs, and the executables are signed last.
+  All package signatures are ad-hoc, and the restricted HID entitlement is
+  deliberately left for the existing local re-sign workflow.
+- `81a84148` is ported to Lumina's embedded macOS metadata with the
+  `_nvstream._tcp` Bonjour service and a Lumina-specific local-network usage
+  description.
+
+Lumina's ScreenCaptureKit, IOKit, Objective-C++, virtual-display sources,
+`vd_helper`, HID entitlement file, helper signing, and asset installation rules
+remain present. `dev.sh` continues to set `BUILD_DOCS=OFF`; performance
+diagnostics are enabled only by `./dev.sh performance`. It now also builds and
+installs `vd_helper` and the complete local asset tree required by those macOS
+features. The local installer preserves existing configuration, application
+entries, and customized launch scripts on upgrade, while a fresh installation
+keeps virtual display disabled by default.
+
+Validation completed:
+
+- Release builds of `sunshine`, `vd_helper`, and `test_sunshine` succeeded with
+  warnings-as-errors, documentation disabled, tray enabled, and performance
+  diagnostics disabled.
+- 326 broader unit tests passed, plus the three remaining non-documentation
+  config-consistency tests. The two tests requiring the absent
+  `docs/configuration.md` and four live macOS mouse tests retain the established
+  exclusions. Focused log-rotation, log-level, and tray identity/state tests
+  all passed.
+- CPack produced a relocatable command-line ZIP containing Lumina, `vd_helper`,
+  assets, the Qt runtime, Cocoa platform plugin, `qt.conf`, and the entitlement
+  file. Every Mach-O and top-level framework passed strict signature checks;
+  dependency inspection found no repository or Homebrew paths, and the
+  packaged CLI launched successfully from its documented working directory.
+- The packaged executable contains the Bonjour metadata, all edited shell
+  scripts pass syntax checks, and `git diff --check` passes.
+- A native tray lifecycle call can block when run inside the unit-test process
+  on this desktop session, so interactive tray menu/restart behavior remains a
+  manual review gate rather than a deterministic automated assertion.
+- Lumina suppresses the tray library's redundant manual `QMenu::popup()` path
+  on macOS and lets `QSystemTrayIcon` present its assigned native context menu,
+  preventing two menus from appearing for one menu-bar click without modifying
+  the vendored tray implementation.
+
 ### Phase 5: dependencies and cleanup
 
 - Update Moonlight Common and libdisplaydevice only after their consumers have
   been ported and tested.
-- Update the tray snapshot with the Qt tray migration.
+- Prune the obsolete platform-specific files from the vendored tray snapshot
+  after the Qt consumer migration is accepted.
 - Add lizardbyte-common only if retained upstream common code requires it.
 - Keep NVENC headers/CPM changes out of the macOS-only target.
 - Remove obsolete Lumina compatibility code only after the upstream
@@ -231,6 +288,14 @@ know about its virtual display, ScreenCaptureKit, or HID sources.
 - Run a final semantic diff against both upstream release ranges and document
   every applicable commit as `ported`, `equivalent`, `combined`, or
   `not applicable`.
+
+#### Phase 5 review checkpoint
+
+Implemented on 2026-08-10 and left uncommitted for review. The third-party dependencies have been updated:
+- `libdisplaydevice` was checked out to `6e9722f89103320c948dc1199066c9e17a69e88a` and `src/display_device.cpp` was updated to use the cross-platform factory (`display_device::makeSettingsManager`).
+- `Moonlight Common` was checked out to `e41355ea01670fd4c830b384009d31dd0339a705`.
+- `build-deps` was checked out to `a9a9277cdafe8a0ff9f197915fe43b383ed4f36b`, and `ffmpeg.cmake` was updated to explicitly pin the release tag `v2026.724.203728`.
+- Obsolete tray files (`tray_darwin.m`, `tray_linux.c`, `tray_windows.c`) were removed from `third-party/tray/src`.
 
 ## Commit strategy
 

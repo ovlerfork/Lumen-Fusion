@@ -26,6 +26,7 @@
 #include "FrameQueue.h"
 #include "PerformanceCollect.h"
 #include "CompareTools.h"
+#include "app_config.h"
 #include "definitions.h"
 #include "RefDecoder.h"
 // Copied from EbAppProcessCmd.c
@@ -60,15 +61,18 @@ typedef struct {
         *input_picture_buffer; /**< input buffer of encoder in test */
 } SvtAv1Context;
 
-/** SvtAv1E2ETestFramework is a class with impelmention of video source control,
- * encoding progress, decoding progress, data collection and data comparision */
+/** SvtAv1E2ETestFramework is a class with implementation of video source
+ * control, encoding progress, decoding progress, data collection and data
+ * comparison */
 class SvtAv1E2ETestFramework : public ::testing::TestWithParam<EncTestSetting> {
   public:
-    typedef struct IvfFile {
+    struct IvfFile {
         FILE *file;
         uint64_t byte_count_since_ivf;
         uint64_t ivf_count;
-        IvfFile(std::string path);
+        explicit IvfFile(const std::string &path);
+        IvfFile(const IvfFile &) = delete;
+        IvfFile &operator=(const IvfFile &) = delete;
         ~IvfFile() {
             if (file) {
                 fclose(file);
@@ -77,7 +81,7 @@ class SvtAv1E2ETestFramework : public ::testing::TestWithParam<EncTestSetting> {
             byte_count_since_ivf = 0;
             ivf_count = 0;
         }
-    } IvfFile;
+    };
 
   protected:
     SvtAv1E2ETestFramework();
@@ -124,7 +128,7 @@ class SvtAv1E2ETestFramework : public ::testing::TestWithParam<EncTestSetting> {
     /* generate event list by frame settings,
        e.g. reference scaling
     */
-    void gen_frame_event(EncTestSetting &setting, uint32_t frame_count,
+    void gen_frame_event(const EncTestSetting &setting, uint32_t frame_count,
                          void **head);
 
   public:
@@ -174,7 +178,9 @@ class SvtAv1E2ETestFramework : public ::testing::TestWithParam<EncTestSetting> {
     IvfFile *output_file_;     /**< file handle for save encoder output data */
     uint8_t obu_frame_header_size_; /**< size of obu frame header */
     PerformanceCollect *collect_;   /**< performance and time collection*/
-    VideoSource *psnr_src_;         /**< video source context for psnr */
+    std::vector<uint32_t>
+        frame_sizes_;            /**< per-frame compressed sizes (bytes) */
+    VideoSource *psnr_src_;      /**< video source context for psnr */
     ICompareQueue *ref_compare_; /**< sink of reference to compare with recon*/
     PsnrStatistics pnsr_statistics_; /**< psnr statistics recorder.*/
     bool use_ext_qp_; /**< flag of use external qp from video source or not*/
@@ -191,7 +197,8 @@ class SvtAv1E2ETestFramework : public ::testing::TestWithParam<EncTestSetting> {
     bool enable_config;  /**< flag to control if use configuratio of encoder
                             params */
     bool enable_invert_tile_decoding;
-    void *enc_config_; /**< handle of encoder configuration data structure */
+    EbConfigWrapper
+        enc_config_; /**< handle of encoder configuration data structure */
     int insert_blank_interval; /**< interval of inserting blank frame in
                                   source*/
 };

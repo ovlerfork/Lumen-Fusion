@@ -11,36 +11,13 @@
 
 # Encoder Library directory CMakeLists.txt
 
-# Shared Encoder Version
-set(ENC_VERSION_MAJOR 3)
-set(ENC_VERSION_MINOR 1)
-set(ENC_VERSION_PATCH 2)
-set(ENC_VERSION ${ENC_VERSION_MAJOR}.${ENC_VERSION_MINOR}.${ENC_VERSION_PATCH})
-
 add_library(common_lib INTERFACE)
-
-if(${CMAKE_SYSTEM_NAME} STREQUAL "Android")
-    find_library(M_LIB NAMES m)
-    if(M_LIB)
-        list(APPEND PLATFORM_LIBS m)
-    endif()
-    list(APPEND PLATFORM_LIBS Threads::Threads)
-elseif(UNIX)
-    if(NOT APPLE)
-        find_library(M_LIB NAMES m)
-        if(M_LIB)
-            list(APPEND PLATFORM_LIBS m)
-        endif()
-        list(APPEND PLATFORM_LIBS Threads::Threads)
-    endif()
-    set(LIBS_PRIVATE "-lpthread -lm")
-endif()
 
 if(COVERAGE)
     if(CMAKE_C_COMPILER_ID MATCHES "GNU")
-        set(LIBS_PRIVATE "-lgcov ${LIBS_PRIVATE}")
-    else(CMAKE_C_COMPILER_ID MATCHES "Clang")
-        set(LIBS_PRIVATE "--coverage ${LIBS_PRIVATE}")
+        list(APPEND PC_LIBS_PRIVATE -lgcov)
+    elseif(CMAKE_C_COMPILER_ID MATCHES "Clang")
+        list(APPEND PC_LIBS_PRIVATE --coverage)
     endif()
 endif()
 
@@ -77,11 +54,15 @@ if(NOT COMPILE_C_ONLY AND HAVE_X86_PLATFORM)
 elseif(NOT COMPILE_C_ONLY AND HAVE_ARM_PLATFORM)
     target_include_directories(SvtAv1Enc PRIVATE
         ${PROJECT_SOURCE_DIR}/Source/Lib/ASM_NEON/
+        ${PROJECT_SOURCE_DIR}/Source/Lib/ASM_ARM_CRC32/
         ${PROJECT_SOURCE_DIR}/Source/Lib/ASM_NEON_DOTPROD/
         ${PROJECT_SOURCE_DIR}/Source/Lib/ASM_NEON_I8MM/
         ${PROJECT_SOURCE_DIR}/Source/Lib/ASM_SVE/
         ${PROJECT_SOURCE_DIR}/Source/Lib/ASM_SVE2/)
     add_subdirectory(ASM_NEON)
+    if(ENABLE_ARM_CRC32)
+        add_subdirectory(ASM_ARM_CRC32)
+    endif()
     if(ENABLE_NEON_DOTPROD)
         add_subdirectory(ASM_NEON_DOTPROD)
     endif()
@@ -114,6 +95,9 @@ if(NOT COMPILE_C_ONLY AND HAVE_X86_PLATFORM)
     endif()
 elseif(NOT COMPILE_C_ONLY AND HAVE_ARM_PLATFORM)
     target_sources(SvtAv1Enc PRIVATE $<TARGET_OBJECTS:ASM_NEON>)
+    if(ENABLE_ARM_CRC32)
+        target_sources(SvtAv1Enc PRIVATE $<TARGET_OBJECTS:ASM_ARM_CRC32>)
+    endif()
     if(ENABLE_NEON_DOTPROD)
         target_sources(SvtAv1Enc PRIVATE $<TARGET_OBJECTS:ASM_NEON_DOTPROD>)
     endif()
@@ -133,10 +117,26 @@ if(common_lib_source)
     target_sources(SvtAv1Enc PRIVATE ${common_lib_source})
 endif()
 
-set_target_properties(SvtAv1Enc PROPERTIES VERSION ${ENC_VERSION})
-set_target_properties(SvtAv1Enc PROPERTIES SOVERSION ${ENC_VERSION_MAJOR})
+if(BUILD_SHARED_LIBS)
+    set(SVT_AV1_TARGET SVT-AV1-shared)
+else()
+    set(SVT_AV1_TARGET SVT-AV1-static)
+endif()
+
+set_target_properties(SvtAv1Enc PROPERTIES VERSION ${PROJECT_VERSION})
+set_target_properties(SvtAv1Enc PROPERTIES SOVERSION ${PROJECT_VERSION_MAJOR})
 set_target_properties(SvtAv1Enc PROPERTIES C_VISIBILITY_PRESET hidden)
-target_link_libraries(SvtAv1Enc PUBLIC ${PLATFORM_LIBS})
+set_target_properties(SvtAv1Enc PROPERTIES EXPORT_NAME ${SVT_AV1_TARGET})
+
+target_link_libraries(SvtAv1Enc PUBLIC  "$<BUILD_INTERFACE:${PLATFORM_LIBS}>"
+                                PRIVATE "$<INSTALL_INTERFACE:${PLATFORM_LIBS}>")
+
+file(GLOB API_HEADERS ${PROJECT_SOURCE_DIR}/Source/API/*.h)
+set_target_properties(SvtAv1Enc PROPERTIES PUBLIC_HEADER "${API_HEADERS}")
+
+# Alias for the exported library target for use in subproject
+add_library(SVT-AV1::SVT-AV1 ALIAS SvtAv1Enc)
+add_library(SVT-AV1::${SVT_AV1_TARGET} ALIAS SvtAv1Enc)
 
 set(ENC_PKG_CONFIG_EXTRA_CFLAGS "")
 if (BUILD_SHARED_LIBS)
@@ -145,10 +145,55 @@ if (BUILD_SHARED_LIBS)
         PRIVATE EB_BUILDING_SHARED_LIBS)
     set(ENC_PKG_CONFIG_EXTRA_CFLAGS " -DEB_DLL")
 endif()
-install(TARGETS SvtAv1Enc
-        ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
-        LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
-        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 
+if(RTC_BUILD)
+    target_compile_definitions(SvtAv1Enc PUBLIC RTC_BUILD=1)
+    set(ENC_PKG_CONFIG_EXTRA_CFLAGS "${ENC_PKG_CONFIG_EXTRA_CFLAGS} -DRTC_BUILD=1")
+else()
+    target_compile_definitions(SvtAv1Enc PUBLIC RTC_BUILD=0)
+    set(ENC_PKG_CONFIG_EXTRA_CFLAGS "${ENC_PKG_CONFIG_EXTRA_CFLAGS} -DRTC_BUILD=0")
+endif()
+
+install(TARGETS SvtAv1Enc
+        EXPORT ${SVT_AV1_TARGET}Targets
+        ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+                COMPONENT Development
+        LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+                COMPONENT Runtime
+                NAMELINK_COMPONENT Development
+        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+                COMPONENT Runtime
+        PUBLIC_HEADER DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/svt-av1"
+                COMPONENT Development
+)
+
+# pkg-config .pc file
+list(JOIN PC_LIBS_PRIVATE " " LIBS_PRIVATE)
+list(JOIN PC_REQUIRES_PRIVATE " " REQUIRES_PRIVATE)
 configure_file(pkg-config.pc.in ${CMAKE_BINARY_DIR}/SvtAv1Enc.pc @ONLY)
-install(FILES ${CMAKE_BINARY_DIR}/SvtAv1Enc.pc DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig")
+install(FILES ${CMAKE_BINARY_DIR}/SvtAv1Enc.pc COMPONENT Development DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig")
+
+# CMake config file
+include(CMakePackageConfigHelpers)
+
+target_include_directories(SvtAv1Enc INTERFACE
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/Source/API>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/svt-av1>)
+
+configure_package_config_file(config.cmake.in SVT-AV1Config.cmake
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/SVT-AV1
+    PATH_VARS CMAKE_INSTALL_LIBDIR CMAKE_INSTALL_INCLUDEDIR)
+
+write_basic_package_version_file(SVT-AV1ConfigVersion.cmake
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY AnyNewerVersion)
+
+install(EXPORT ${SVT_AV1_TARGET}Targets
+        NAMESPACE SVT-AV1::
+        COMPONENT Development
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/SVT-AV1)
+
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/SVT-AV1Config.cmake
+              ${CMAKE_CURRENT_BINARY_DIR}/SVT-AV1ConfigVersion.cmake
+        COMPONENT Development
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/SVT-AV1)

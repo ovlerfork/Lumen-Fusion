@@ -12,9 +12,13 @@
 #define EbMalloc_h
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdint.h>
 
-#include "EbSvtAv1Enc.h"
 #include "definitions.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #ifndef NDEBUG
 #define DEBUG_MEMORY_USAGE
@@ -31,12 +35,15 @@
 // Returns 0 in case of overflow of nmemb * size.
 static inline int32_t check_size_argument_overflow(uint64_t nmemb, uint64_t size) {
     const uint64_t total_size = nmemb * size;
-    if (nmemb == 0)
+    if (nmemb == 0) {
         return 1;
-    if (size > AOM_MAX_ALLOCABLE_MEMORY / nmemb)
+    }
+    if (size > AOM_MAX_ALLOCABLE_MEMORY / nmemb) {
         return 0;
-    if (total_size != (size_t)total_size)
+    }
+    if (total_size != (size_t)total_size) {
         return 0;
+    }
     return 1;
 }
 
@@ -44,7 +51,9 @@ static inline size_t get_aligned_malloc_size(size_t size, size_t align) {
     return size + align - 1 + ADDRESS_STORAGE_SIZE;
 }
 
-static inline size_t* get_malloc_address_location(void* const mem) { return ((size_t*)mem) - 1; }
+static inline size_t* get_malloc_address_location(void* const mem) {
+    return ((size_t*)mem) - 1;
+}
 
 static inline void set_actual_malloc_address(void* const mem, const void* const malloc_addr) {
     size_t* const malloc_addr_location = get_malloc_address_location(mem);
@@ -60,8 +69,9 @@ static inline void* svt_aom_memalign(size_t align, size_t size) {
     void*        x            = NULL;
     const size_t aligned_size = get_aligned_malloc_size(size, align);
 #if defined(AOM_MAX_ALLOCABLE_MEMORY)
-    if (!check_size_argument_overflow(1, aligned_size))
+    if (!check_size_argument_overflow(1, aligned_size)) {
         return NULL;
+    }
 #endif
     void* const addr = malloc(aligned_size);
     if (addr) {
@@ -71,7 +81,9 @@ static inline void* svt_aom_memalign(size_t align, size_t size) {
     return x;
 }
 
-static inline void* svt_aom_malloc(size_t size) { return svt_aom_memalign(DEFAULT_ALIGNMENT, size); }
+static inline void* svt_aom_malloc(size_t size) {
+    return svt_aom_memalign(DEFAULT_ALIGNMENT, size);
+}
 
 static inline void svt_aom_free(void* memblk) {
     if (memblk) {
@@ -83,15 +95,13 @@ static inline void svt_aom_free(void* memblk) {
 static inline void* svt_aom_memset16(void* dest, int32_t val, size_t length) {
     size_t    i;
     uint16_t* dest16 = (uint16_t*)dest;
-    for (i = 0; i < length; i++) *dest16++ = (uint16_t)val;
+    for (i = 0; i < length; i++) {
+        *dest16++ = (uint16_t)val;
+    }
     return dest;
 }
+
 //-------------------------------
-#if EXCLUDE_HASH
-#define svt_print_alloc_fail(a, b) svt_print_alloc_fail_impl(a, 0)
-#else
-#define svt_print_alloc_fail(a, b) svt_print_alloc_fail_impl(a, b)
-#endif
 void svt_print_alloc_fail_impl(const char* file, int line);
 
 #ifdef DEBUG_MEMORY_USAGE
@@ -101,13 +111,7 @@ void svt_decrease_component_count(void);
 void svt_add_mem_entry_impl(void* ptr, EbPtrType type, size_t count, const char* file, uint32_t line);
 void svt_remove_mem_entry(void* ptr, EbPtrType type);
 
-#if EXCLUDE_HASH
-#define svt_add_mem_entry(a, b, c, d, e) svt_add_mem_entry_impl(a, b, c, d, 0)
-#else
-#define svt_add_mem_entry(a, b, c, d, e) svt_add_mem_entry_impl(a, b, c, d, e)
-#endif
-
-#define EB_ADD_MEM_ENTRY(p, type, count) svt_add_mem_entry(p, type, count, __FILE__, __LINE__)
+#define EB_ADD_MEM_ENTRY(p, type, count) svt_add_mem_entry_impl(p, type, count, __FILE__, EB_LINE_NUM)
 #define EB_REMOVE_MEM_ENTRY(p, type) svt_remove_mem_entry(p, type);
 
 #else
@@ -122,19 +126,22 @@ void svt_remove_mem_entry(void* ptr, EbPtrType type);
     } while (0)
 #define EB_ADD_MEM_ENTRY(p, type, count) \
     do {                                 \
+        (void)(p);                       \
+        (void)(count);                   \
     } while (0)
 #define EB_REMOVE_MEM_ENTRY(p, type) \
     do {                             \
+        (void)(p);                   \
     } while (0)
 
 #endif //DEBUG_MEMORY_USAGE
 
-#define EB_NO_THROW_ADD_MEM(p, size, type)            \
-    do {                                              \
-        if (!p)                                       \
-            svt_print_alloc_fail(__FILE__, __LINE__); \
-        else                                          \
-            EB_ADD_MEM_ENTRY(p, type, size);          \
+#define EB_NO_THROW_ADD_MEM(p, size, type)                    \
+    do {                                                      \
+        if (!p)                                               \
+            svt_print_alloc_fail_impl(__FILE__, EB_LINE_NUM); \
+        else                                                  \
+            EB_ADD_MEM_ENTRY(p, type, size);                  \
     } while (0)
 
 #define EB_CHECK_MEM(p)                           \
@@ -162,16 +169,37 @@ void svt_remove_mem_entry(void* ptr, EbPtrType type);
         EB_CHECK_MEM(pointer);             \
     } while (0)
 
-#define EB_NO_THROW_CALLOC(pointer, count, size)             \
-    do {                                                     \
-        pointer = calloc(count, size);                       \
-        EB_NO_THROW_ADD_MEM(pointer, count* size, EB_C_PTR); \
+#define EB_MALLOC_NO_CHECK(pointer, size)  \
+    do {                                   \
+        EB_NO_THROW_MALLOC(pointer, size); \
+    } while (0)
+
+#define EB_MALLOC_OBJECT(pointer)                        \
+    do {                                                 \
+        EB_NO_THROW_MALLOC(pointer, sizeof(*(pointer))); \
+        EB_CHECK_MEM(pointer);                           \
+    } while (0)
+
+#define EB_MALLOC_OBJECT_NO_CHECK(pointer)               \
+    do {                                                 \
+        EB_NO_THROW_MALLOC(pointer, sizeof(*(pointer))); \
+    } while (0)
+
+#define EB_NO_THROW_CALLOC(pointer, count, size)              \
+    do {                                                      \
+        pointer = calloc(count, size);                        \
+        EB_NO_THROW_ADD_MEM(pointer, count * size, EB_C_PTR); \
     } while (0)
 
 #define EB_CALLOC(pointer, count, size)           \
     do {                                          \
         EB_NO_THROW_CALLOC(pointer, count, size); \
         EB_CHECK_MEM(pointer);                    \
+    } while (0)
+
+#define EB_CALLOC_NO_CHECK(pointer, count, size)  \
+    do {                                          \
+        EB_NO_THROW_CALLOC(pointer, count, size); \
     } while (0)
 
 #define EB_FREE(pointer)                        \
@@ -181,48 +209,83 @@ void svt_remove_mem_entry(void* ptr, EbPtrType type);
         pointer = NULL;                         \
     } while (0)
 
-#define EB_MALLOC_ARRAY(pa, count) \
-    do { EB_MALLOC(pa, sizeof(*(pa)) * (count)); } while (0)
+#define EB_FREE_ARRAY(pa) EB_FREE(pa);
+
+#define EB_MALLOC_ARRAY(pa, count)              \
+    do {                                        \
+        EB_MALLOC(pa, sizeof(*(pa)) * (count)); \
+    } while (0)
+
+#define EB_MALLOC_ARRAY_NO_CHECK(pa, count)              \
+    do {                                                 \
+        EB_MALLOC_NO_CHECK(pa, sizeof(*(pa)) * (count)); \
+    } while (0)
 
 #define EB_REALLOC_ARRAY(pa, count)            \
     do {                                       \
-        size_t size = sizeof(*(pa)) * (count); \
-        void*  p    = realloc(pa, size);       \
-        if (p) {                               \
+        size_t s_ra = sizeof(*(pa)) * (count); \
+        void*  p_ra = realloc(pa, s_ra);       \
+        if (p_ra) {                            \
             EB_REMOVE_MEM_ENTRY(pa, EB_N_PTR); \
+            EB_ADD_MEM(p_ra, s_ra, EB_N_PTR);  \
+        } else {                               \
+            EB_FREE(pa);                       \
         }                                      \
-        EB_ADD_MEM(p, size, EB_N_PTR);         \
-        pa = p;                                \
+        pa = p_ra;                             \
     } while (0)
 
-#define EB_CALLOC_ARRAY(pa, count) \
-    do { EB_CALLOC(pa, count, sizeof(*(pa))); } while (0)
-
-#define EB_FREE_ARRAY(pa) EB_FREE(pa);
-
-#define EB_ALLOC_PTR_ARRAY(pa, count) \
-    do { EB_CALLOC(pa, count, sizeof(*(pa))); } while (0)
-
-#define EB_FREE_PTR_ARRAY(pa, count)                           \
-    do {                                                       \
-        if (pa) {                                              \
-            for (size_t i = 0; i < count; i++) EB_FREE(pa[i]); \
-            EB_FREE(pa);                                       \
-        }                                                      \
+#define EB_REALLOC_ARRAY_NO_CHECK(pa, count)            \
+    do {                                                \
+        size_t    s_ra = sizeof(*(pa)) * (count);       \
+        uintptr_t pa_i = (uintptr_t)pa;                 \
+        void*     p_ra = realloc(pa, s_ra);             \
+        if (p_ra) {                                     \
+            EB_REMOVE_MEM_ENTRY((void*)pa_i, EB_N_PTR); \
+            EB_NO_THROW_ADD_MEM(p_ra, s_ra, EB_N_PTR);  \
+        } else {                                        \
+            EB_FREE(pa);                                \
+        }                                               \
+        pa = p_ra;                                      \
     } while (0)
 
-#define EB_MALLOC_2D(p2d, width, height)                                     \
-    do {                                                                     \
-        EB_MALLOC_ARRAY(p2d, width);                                         \
-        EB_MALLOC_ARRAY(p2d[0], (width) * (height));                         \
-        for (size_t w = 1; w < (width); w++) p2d[w] = p2d[0] + w * (height); \
+#define EB_CALLOC_ARRAY(pa, count)           \
+    do {                                     \
+        EB_CALLOC(pa, count, sizeof(*(pa))); \
     } while (0)
 
-#define EB_CALLOC_2D(p2d, width, height)                                     \
-    do {                                                                     \
-        EB_MALLOC_ARRAY(p2d, width);                                         \
-        EB_CALLOC_ARRAY(p2d[0], (width) * (height));                         \
-        for (size_t w = 1; w < (width); w++) p2d[w] = p2d[0] + w * (height); \
+#define EB_CALLOC_ARRAY_NO_CHECK(pa, count)           \
+    do {                                              \
+        EB_CALLOC_NO_CHECK(pa, count, sizeof(*(pa))); \
+    } while (0)
+
+#define EB_ALLOC_PTR_ARRAY(pa, count)        \
+    do {                                     \
+        EB_CALLOC(pa, count, sizeof(*(pa))); \
+    } while (0)
+
+#define EB_FREE_PTR_ARRAY(pa, count)           \
+    do {                                       \
+        if (pa) {                              \
+            for (size_t i = 0; i < count; i++) \
+                EB_FREE(pa[i]);                \
+            EB_FREE(pa);                       \
+        }                                      \
+    } while (0)
+
+#define EB_MALLOC_2D(p2d, width, height)             \
+    do {                                             \
+        EB_MALLOC_ARRAY(p2d, width);                 \
+        EB_MALLOC_ARRAY(p2d[0], (width) * (height)); \
+        for (size_t w = 1; w < (width); w++)         \
+            p2d[w] = p2d[0] + w * (height);          \
+    } while (0)
+
+#define EB_CALLOC_2D(p2d, width, height)             \
+    do {                                             \
+        EB_MALLOC_ARRAY(p2d, width);                 \
+        EB_CALLOC_ARRAY(p2d[0], (width) * (height)); \
+        for (size_t w = 1; w < (width); w++)         \
+            p2d[w] = p2d[0] + w * (height);          \
     } while (0)
 
 #define EB_FREE_2D(p2d)            \
@@ -270,5 +333,9 @@ void svt_remove_mem_entry(void* ptr, EbPtrType type);
     } while (0)
 
 #define EB_FREE_ALIGNED_ARRAY(pa) EB_FREE_ALIGNED(pa)
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif //EbMalloc_h

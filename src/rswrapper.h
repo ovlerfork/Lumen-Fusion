@@ -8,8 +8,7 @@
 // standard includes
 #include <stdint.h>
 
-typedef struct _reed_solomon reed_solomon;
-
+#include "../third-party/nanors/rs.h"
 typedef reed_solomon *(*reed_solomon_new_t)(int data_shards, int parity_shards);
 typedef void (*reed_solomon_release_t)(reed_solomon *rs);
 typedef int (*reed_solomon_encode_t)(reed_solomon *rs, uint8_t **shards, int nr_shards, int bs);

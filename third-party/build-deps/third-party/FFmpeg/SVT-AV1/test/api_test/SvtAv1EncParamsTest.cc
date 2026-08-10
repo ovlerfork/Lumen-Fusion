@@ -49,15 +49,11 @@ namespace {
  */
 class EncParamTestBase : public ::testing::Test {
   public:
-    EncParamTestBase() {
-        memset(&ctxt_, 0, sizeof(ctxt_));
-        param_name_str_ = "";
+    EncParamTestBase() : ctxt_{}, param_name_str_("") {
+        ;
     }
-    EncParamTestBase(const std::string &param_name) {
-        memset(&ctxt_, 0, sizeof(ctxt_));
-        param_name_str_ = param_name;
-    }
-    virtual ~EncParamTestBase() {
+    EncParamTestBase(const std::string &param_name)
+        : ctxt_{}, param_name_str_(param_name) {
     }
 
   public:
@@ -96,11 +92,11 @@ class EncParamTestBase : public ::testing::Test {
     virtual void TearDown() override {
         // TODO: svt_av1_enc_deinit should not be called here, for this test
         // does not call svt_av1_enc_init, but there is huge memory leak if only
-        // calls svt_av1_enc_deinit_handle. please remmove it after we pass
+        // calls svt_av1_enc_deinit_handle. please remove it after we pass
         // EncApiTest-->repeat_normal_setup
         ASSERT_EQ(EB_ErrorNone, svt_av1_enc_deinit(ctxt_.enc_handle))
             << "svt_av1_enc_deinit failed";
-        // destory encoder
+        // destroy encoder
         ASSERT_EQ(EB_ErrorNone, svt_av1_enc_deinit_handle(ctxt_.enc_handle))
             << "svt_av1_enc_deinit_handle failed";
     }
@@ -163,7 +159,8 @@ class EncParamTestBase : public ::testing::Test {
 #define DEFINE_PARAM_TEST_CLASS(test_name, param_name)                        \
     class test_name : public EncParamTestBase {                               \
       public:                                                                 \
-        test_name() : EncParamTestBase(#param_name) {}                        \
+        test_name() : EncParamTestBase(#param_name) {                         \
+        }                                                                     \
         virtual void run_default_param_check() override {                     \
             EncParamTestBase::SetUp();                                        \
             ASSERT_EQ(ctxt_.enc_params.param_name,                            \
@@ -291,21 +288,9 @@ PARAM_TEST(EncParamLevelTest);
 DEFINE_PARAM_TEST_CLASS(EncParamOplLevelTest, use_cpu_flags);
 PARAM_TEST(EncParamOplLevelTest);
 
-/** Test case for channel_id*/
-DEFINE_PARAM_TEST_CLASS(EncParamChIdTest, channel_id);
-PARAM_TEST(EncParamChIdTest);
-
-/** Test case for active_channel_count*/
-DEFINE_PARAM_TEST_CLASS(EncParamActiveChCountTest, active_channel_count);
-PARAM_TEST(EncParamActiveChCountTest);
-
 /** Test case for logical_processors*/
 DEFINE_PARAM_TEST_CLASS(EncParamLevelOfParallelismTest, level_of_parallelism);
 PARAM_TEST(EncParamLevelOfParallelismTest);
-
-/** Test case for target_socket*/
-DEFINE_PARAM_TEST_CLASS(EncParamTargetSocketTest, target_socket);
-PARAM_TEST(EncParamTargetSocketTest);
 
 /** Test case for recon_enabled*/
 DEFINE_PARAM_TEST_CLASS(EncParamReconEnabledTest, recon_enabled);

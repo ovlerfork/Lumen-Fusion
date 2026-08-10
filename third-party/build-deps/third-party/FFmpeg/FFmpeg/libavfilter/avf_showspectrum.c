@@ -368,12 +368,12 @@ static int query_formats(const AVFilterContext *ctx,
     int ret;
 
     /* set input audio formats */
-    formats = ff_make_format_list(sample_fmts);
+    formats = ff_make_sample_format_list(sample_fmts);
     if ((ret = ff_formats_ref(formats, &cfg_in[0]->formats)) < 0)
         return ret;
 
     /* set output video format */
-    formats = ff_make_format_list(pix_fmts);
+    formats = ff_make_pixel_format_list(pix_fmts);
     if ((ret = ff_formats_ref(formats, &cfg_out[0]->formats)) < 0)
         return ret;
 
@@ -1143,6 +1143,11 @@ static int config_output(AVFilterLink *outlink)
             float scale = 1.f;
 
             ret = av_tx_init(&s->fft[i], &s->tx_fn, AV_TX_FLOAT_FFT, 0, fft_size << (!!s->stop), &scale, 0);
+            if (ret < 0) {
+                av_log(ctx, AV_LOG_ERROR, "Unable to create FFT context. "
+                       "The window size might be too high.\n");
+                return ret;
+            }
             if (s->stop) {
                 ret = av_tx_init(&s->ifft[i], &s->itx_fn, AV_TX_FLOAT_FFT, 1, fft_size << (!!s->stop), &scale, 0);
                 if (ret < 0) {
@@ -1150,11 +1155,6 @@ static int config_output(AVFilterLink *outlink)
                            "The window size might be too high.\n");
                     return ret;
                 }
-            }
-            if (ret < 0) {
-                av_log(ctx, AV_LOG_ERROR, "Unable to create FFT context. "
-                       "The window size might be too high.\n");
-                return ret;
             }
         }
 

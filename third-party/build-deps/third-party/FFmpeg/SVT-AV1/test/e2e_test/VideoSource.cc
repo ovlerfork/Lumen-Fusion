@@ -18,6 +18,10 @@
  * @author Cidana-Ryan
  *
  ******************************************************************************/
+// for getenv on windows
+#if defined(_WIN32) && !defined(_CRT_SECURE_NO_WARNINGS)
+#define _CRT_SECURE_NO_WARNINGS
+#endif
 #include <stdio.h>
 #include "definitions.h"
 #include "VideoSource.h"
@@ -201,7 +205,7 @@ uint32_t VideoFileSource::read_input_frame() {
     }
 
     // Read raw data from file
-    size_t read_len = 0;
+    size_t read_len;
     uint32_t i;
     {
         uint8_t *eb_input_ptr = nullptr;

@@ -14,15 +14,21 @@
 
 # Include Subdirectories
 include_directories(${PROJECT_SOURCE_DIR}/test/
+    ${PROJECT_SOURCE_DIR}/test/e2e_test/
     ${PROJECT_SOURCE_DIR}/third_party/googletest/include
     ${PROJECT_SOURCE_DIR}/third_party/googletest/src
     ${PROJECT_SOURCE_DIR}/Source/API)
 
 set(all_files
+    MultiEncoderTest.cc
     SvtAv1EncApiTest.cc
     SvtAv1EncApiTest.h
+    SvtAv1EncOnTheFlyApiTest.cc
+    SvtAv1EncRtcResolutionApiTest.cc
+    SvtAv1EncRefMgmtApiTest.cc
     SvtAv1EncParamsTest.cc
     params.h
+    ${PROJECT_SOURCE_DIR}/test/e2e_test/VideoSource.cc
     )
 
 set(lib_list
@@ -49,4 +55,4 @@ endif()
 
 install(TARGETS SvtAv1ApiTests RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
-add_test(SvtAv1ApiTests ${CMAKE_OUTPUT_DIRECTORY}/SvtAv1ApiTests)
+add_test(NAME SvtAv1ApiTests COMMAND SvtAv1ApiTests)

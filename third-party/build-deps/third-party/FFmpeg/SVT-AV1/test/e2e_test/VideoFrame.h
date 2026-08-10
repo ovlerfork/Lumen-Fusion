@@ -25,14 +25,12 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <assert.h>
+#include "definitions.h"
 
 #define INVALID_QP (0xFF)
 
 #ifndef PLANE_NUM
 #define PLANE_NUM (4)
-#define PLANE_Y (0)
-#define PLANE_U (1)
-#define PLANE_V (2)
 #define PLANE_A (3)
 #endif  // !PLANE_NUM
 
@@ -94,7 +92,7 @@ typedef struct VideoFrame : public VideoFrameParam {
         qp = INVALID_QP;
         compress_10bit = false;
     }
-    VideoFrame(const VideoFrameParam &param) {
+    explicit VideoFrame(const VideoFrameParam &param) {
         // copy basic info from param
         *(VideoFrameParam *)this = param;
         disp_width = param.width;
@@ -129,7 +127,25 @@ typedef struct VideoFrame : public VideoFrameParam {
         } else
             printf("video frame buffer is out of memory!!\n");
     }
-    VideoFrame &operator=(const VideoFrame &) = default;
+    VideoFrame &operator=(const VideoFrame &other) {
+        if (this != &other) {
+            // copy information from other
+            *static_cast<VideoFrameParam *>(this) =
+                *static_cast<const VideoFrameParam *>(&other);
+            disp_width = other.disp_width;
+            disp_height = other.disp_height;
+            memcpy(stride, other.stride, sizeof(stride));
+            memcpy(planes, other.planes, sizeof(planes));
+            context = other.context;
+            timestamp = other.timestamp;
+            buffer = other.buffer;
+            buf_size = other.buf_size;
+            qp = other.qp;
+            compress_10bit = other.compress_10bit;
+            memcpy(ext_planes, other.ext_planes, sizeof(ext_planes));
+        }
+        return *this;
+    };
     VideoFrame(const VideoFrame &origin) {
         // copy information from origin
         *this = origin;

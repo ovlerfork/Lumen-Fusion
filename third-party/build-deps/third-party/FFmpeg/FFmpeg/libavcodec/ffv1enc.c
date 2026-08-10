@@ -435,7 +435,7 @@ static void set_micro_version(FFV1Context *f)
         if (f->version == 3) {
             f->micro_version = 4;
         } else if (f->version == 4) {
-            f->micro_version = 8;
+            f->micro_version = 9;
         } else
             av_assert0(0);
 
@@ -906,6 +906,7 @@ av_cold int ff_ffv1_encode_setup_plane_info(AVCodecContext *avctx,
         s->use32bit = 1;
         s->version = FFMAX(s->version, 1);
         break;
+    case AV_PIX_FMT_GBRP:
     case AV_PIX_FMT_0RGB32:
         s->colorspace = 1;
         s->chroma_planes = 1;
@@ -914,6 +915,8 @@ av_cold int ff_ffv1_encode_setup_plane_info(AVCodecContext *avctx,
     case AV_PIX_FMT_GBRP9:
         if (!avctx->bits_per_raw_sample)
             s->bits_per_raw_sample = 9;
+    case AV_PIX_FMT_X2BGR10:
+    case AV_PIX_FMT_X2RGB10:
     case AV_PIX_FMT_GBRP10:
     case AV_PIX_FMT_GBRAP10:
         if (!avctx->bits_per_raw_sample && !s->bits_per_raw_sample)
@@ -1310,7 +1313,7 @@ static int encode_float32_remap_segment(FFV1SliceContext *sc,
         int current_mul = current_mul_index < 0 ? 1 : FFABS(mul[current_mul_index]);
         int64_t val;
         if (i == pixel_num) {
-            if (last_val == 0xFFFFFFFF) {
+            if (last_val == 0xFFFFFFFF && (!run || run1final)) {
                 break;
             } else {
                 val = last_val + ((1LL<<32) - last_val + current_mul - 1) / current_mul * current_mul;

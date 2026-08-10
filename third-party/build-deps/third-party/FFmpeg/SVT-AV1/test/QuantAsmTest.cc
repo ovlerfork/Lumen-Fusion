@@ -21,6 +21,7 @@
  *
  ******************************************************************************/
 
+#include <chrono>
 #include <random>
 #include <stdint.h>
 #include <stdio.h>
@@ -85,7 +86,7 @@ class QuantizeBTest : public ::testing::TestWithParam<QuantizeParam> {
         coeff_max_ = (1 << (7 + bd_)) - 1;
         rnd_ = new SVTRandom(coeff_min_, coeff_max_);
         PictureParentControlSet pcs;
-        pcs.scs = (SequenceControlSet *)malloc(sizeof(SequenceControlSet));
+        pcs.scs = new SequenceControlSet;
         pcs.frm_hdr.quantization_params.base_q_idx = 0;
         pcs.scs->static_config.sharpness = 0;
         PictureParentControlSet *pcs_ptr = &pcs;
@@ -93,6 +94,7 @@ class QuantizeBTest : public ::testing::TestWithParam<QuantizeParam> {
         svt_av1_build_quantizer(
             pcs_ptr, bd_, 0, 0, 0, 0, 0, &qtab_quants_, &qtab_deq_);
         setup_func_ptrs();
+        delete pcs.scs;
     }
 
     virtual ~QuantizeBTest() {
@@ -124,14 +126,15 @@ class QuantizeBTest : public ::testing::TestWithParam<QuantizeParam> {
      * @brief setup reference and target function ptrs
      * @see svt_aom_setup_rtcd_internal() in aom_dsp_rtcd.h
      */
-    virtual void setup_func_ptrs() {
+    void setup_func_ptrs() {
         if (bd_ == EB_EIGHT_BIT) {
-            quant_ref_ = svt_aom_quantize_b_c_ii;
-            quant_test_ = TEST_GET_PARAM(2);
+            quant_ref_ = svt_aom_quantize_b_c;
+#if CONFIG_ENABLE_HIGH_BIT_DEPTH
         } else {
             quant_ref_ = svt_aom_highbd_quantize_b_c;
-            quant_test_ = TEST_GET_PARAM(2);
+#endif  // CONFIG_ENABLE_HIGH_BIT_DEPTH
         }
+        quant_test_ = TEST_GET_PARAM(2);
         if (tx_size_ == TX_32X32) {
             log_scale = 1;
         } else if (tx_size_ == TX_64X64) {
@@ -146,7 +149,7 @@ class QuantizeBTest : public ::testing::TestWithParam<QuantizeParam> {
      * quant/dequant/eob are exactly same between C output and avx2 outptu
      */
     virtual void run_quantize(int q) {
-        const ScanOrder *const sc = &av1_scan_orders[tx_size_][DCT_DCT];
+        const ScanOrder *const sc = get_scan_order(tx_size_, DCT_DCT);
         const int16_t *zbin = qtab_quants_.y_zbin[q];
         const int16_t *round = qtab_quants_.y_round[q];
         const int16_t *quant = qtab_quants_.y_quant[q];
@@ -203,6 +206,96 @@ class QuantizeBTest : public ::testing::TestWithParam<QuantizeParam> {
         }
 
         ASSERT_EQ(eob_ref_, eob_test_) << "eobs mismatch, Q: " << q;
+    }
+
+    // Fill a realistic residual: `density` fraction of coeffs are non-zero,
+    // placed in the lowest-frequency (top-left) scan positions; the rest of
+    // the block (high-frequency tail) is zero. Mirrors energy compaction of a
+    // real transform block.
+    void fill_coeff_topleft(const int16_t *scan, double density) {
+        memset(coeff_in_, 0, MAX_TX_SQUARE * sizeof(TranLow));
+        int num = static_cast<int>(density * n_coeffs_ + 0.5);
+        if (num < 1)
+            num = 1;
+        if (num > n_coeffs_)
+            num = n_coeffs_;
+        for (int i = 0; i < num; ++i) {
+            TranLow c = rnd_->random();
+            if (c == 0)
+                c = 1;
+            coeff_in_[scan[i]] = c;
+        }
+    }
+
+    // Microbenchmark: C reference vs SIMD quantize_b across three coefficient
+    // densities (100%, 25%, 10%) with energy concentrated in the top-left
+    // (low-frequency) corner. Disabled by default; run with
+    // --gtest_also_run_disabled_tests.
+    void run_speed() {
+        const ScanOrder *const sc = get_scan_order(tx_size_, DCT_DCT);
+        const int q = 0;
+        const int16_t *zbin = qtab_quants_.y_zbin[q];
+        const int16_t *round = qtab_quants_.y_round[q];
+        const int16_t *quant = qtab_quants_.y_quant[q];
+        const int16_t *quant_shift = qtab_quants_.y_quant_shift[q];
+        const int16_t *dequant = qtab_deq_.y_dequant_qtx[q];
+
+        auto run =
+            [&](QuantizeFunc fn, TranLow *qc, TranLow *dqc, uint16_t *e) {
+                fn(coeff_in_,
+                   n_coeffs_,
+                   zbin,
+                   round,
+                   quant,
+                   quant_shift,
+                   qc,
+                   dqc,
+                   dequant,
+                   e,
+                   sc->scan,
+                   sc->iscan,
+                   NULL,
+                   NULL,
+                   log_scale);
+            };
+
+        const double densities[] = {1.0, 0.25, 0.10};
+        for (double density : densities) {
+            fill_coeff_topleft(sc->scan, density);
+            memset(qcoeff_ref_, 0, MAX_TX_SQUARE * sizeof(TranLow));
+            memset(dqcoeff_ref_, 0, MAX_TX_SQUARE * sizeof(TranLow));
+            memset(qcoeff_test_, 0, MAX_TX_SQUARE * sizeof(TranLow));
+            memset(dqcoeff_test_, 0, MAX_TX_SQUARE * sizeof(TranLow));
+
+            const uint64_t num_loop = 300000;
+            for (int i = 0; i < 4000; ++i) {  // warmup
+                run(quant_ref_, qcoeff_ref_, dqcoeff_ref_, &eob_ref_);
+                run(quant_test_, qcoeff_test_, dqcoeff_test_, &eob_test_);
+            }
+            auto t0 = std::chrono::steady_clock::now();
+            for (uint64_t i = 0; i < num_loop; ++i)
+                run(quant_ref_, qcoeff_ref_, dqcoeff_ref_, &eob_ref_);
+            auto t1 = std::chrono::steady_clock::now();
+            for (uint64_t i = 0; i < num_loop; ++i)
+                run(quant_test_, qcoeff_test_, dqcoeff_test_, &eob_test_);
+            auto t2 = std::chrono::steady_clock::now();
+            const double c_ns =
+                std::chrono::duration<double, std::nano>(t1 - t0).count() /
+                num_loop;
+            const double n_ns =
+                std::chrono::duration<double, std::nano>(t2 - t1).count() /
+                num_loop;
+            printf(
+                "[ SPEED    ] tx=%2d bd=%2d n=%4d dens=%3.0f%% : C %8.1f ns  "
+                "SIMD %8.1f ns  speedup %.2fx (quantize_b)\n",
+                static_cast<int>(tx_size_),
+                static_cast<int>(bd_),
+                n_coeffs_,
+                density * 100.0,
+                c_ns,
+                n_ns,
+                c_ns / n_ns);
+        }
     }
 
     void fill_coeff_const(int i_begin, int i_end, TranLow c) {
@@ -306,6 +399,10 @@ TEST_P(QuantizeBTest, input_random_all_q_all) {
     }
 }
 
+TEST_P(QuantizeBTest, DISABLED_Speed) {
+    run_speed();
+}
+
 #ifdef ARCH_X86_64
 INSTANTIATE_TEST_SUITE_P(
     LBD_SSE4_1, QuantizeBTest,
@@ -322,7 +419,7 @@ INSTANTIATE_TEST_SUITE_P(
                                          static_cast<int>(TX_64X64)),
                        ::testing::Values(static_cast<int>(EB_EIGHT_BIT)),
                        ::testing::Values(svt_aom_quantize_b_avx2)));
-
+#if CONFIG_ENABLE_HIGH_BIT_DEPTH
 INSTANTIATE_TEST_SUITE_P(
     HBD_SSE4_1, QuantizeBTest,
     ::testing::Combine(::testing::Values(static_cast<int>(TX_16X16),
@@ -338,6 +435,7 @@ INSTANTIATE_TEST_SUITE_P(
                                          static_cast<int>(TX_64X64)),
                        ::testing::Values(static_cast<int>(EB_TEN_BIT)),
                        ::testing::Values(svt_aom_highbd_quantize_b_avx2)));
+#endif  // CONFIG_ENABLE_HIGH_BIT_DEPTH
 #endif  // ARCH_X86_64
 
 #ifdef ARCH_AARCH64
@@ -348,7 +446,7 @@ INSTANTIATE_TEST_SUITE_P(
                                          static_cast<int>(TX_64X64)),
                        ::testing::Values(static_cast<int>(EB_EIGHT_BIT)),
                        ::testing::Values(svt_aom_quantize_b_neon)));
-
+#if CONFIG_ENABLE_HIGH_BIT_DEPTH
 INSTANTIATE_TEST_SUITE_P(
     HBD_NEON, QuantizeBTest,
     ::testing::Combine(::testing::Values(static_cast<int>(TX_16X16),
@@ -356,8 +454,10 @@ INSTANTIATE_TEST_SUITE_P(
                                          static_cast<int>(TX_64X64)),
                        ::testing::Values(static_cast<int>(EB_TEN_BIT)),
                        ::testing::Values(svt_aom_highbd_quantize_b_neon)));
+#endif  // CONFIG_ENABLE_HIGH_BIT_DEPTH
 #endif  // ARCH_AARCH64
 
+#if CONFIG_ENABLE_QUANT_MATRIX
 class QuantizeBQmTest : public QuantizeBTest {
   protected:
     QuantizeBQmTest() : QuantizeBTest() {
@@ -368,7 +468,7 @@ class QuantizeBQmTest : public QuantizeBTest {
     virtual ~QuantizeBQmTest() = default;
 
     void run_quantize(int q) override {
-        const ScanOrder *const sc = &av1_scan_orders[tx_size_][DCT_DCT];
+        const ScanOrder *const sc = get_scan_order(tx_size_, DCT_DCT);
         const int16_t *zbin = qtab_quants_.y_zbin[q];
         const int16_t *round = qtab_quants_.y_round[q];
         const int16_t *quant = qtab_quants_.y_quant[q];
@@ -432,7 +532,7 @@ class QuantizeBQmTest : public QuantizeBTest {
     }
 
   private:
-    TxSize av1_get_adjusted_tx_size(TxSize tx_size) {
+    static TxSize av1_get_adjusted_tx_size(TxSize tx_size) {
         switch (tx_size) {
         case TX_64X64:
         case TX_64X32:
@@ -563,5 +663,25 @@ INSTANTIATE_TEST_SUITE_P(
                        ::testing::Values(static_cast<int>(EB_TEN_BIT)),
                        ::testing::Values(svt_av1_highbd_quantize_b_qm_avx2)));
 #endif  // ARCH_X86_64
+
+#ifdef ARCH_AARCH64
+INSTANTIATE_TEST_SUITE_P(
+    LBD_NEON, QuantizeBQmTest,
+    ::testing::Combine(::testing::Values(static_cast<int>(TX_16X16),
+                                         static_cast<int>(TX_32X32),
+                                         static_cast<int>(TX_64X64)),
+                       ::testing::Values(static_cast<int>(EB_EIGHT_BIT)),
+                       ::testing::Values(svt_av1_quantize_b_qm_neon)));
+
+INSTANTIATE_TEST_SUITE_P(
+    HBD_NEON, QuantizeBQmTest,
+    ::testing::Combine(::testing::Values(static_cast<int>(TX_16X16),
+                                         static_cast<int>(TX_32X32),
+                                         static_cast<int>(TX_64X64)),
+                       ::testing::Values(static_cast<int>(EB_TEN_BIT)),
+                       ::testing::Values(svt_av1_highbd_quantize_b_qm_neon)));
+#endif  // ARCH_AARCH64
+
+#endif  // CONFIG_ENABLE_QUANT_MATRIX
 
 }  // namespace QuantizeAsmTest

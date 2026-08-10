@@ -20,6 +20,7 @@
 
 #include "config_components.h"
 
+#include "libavutil/attributes.h"
 #include "libavutil/hdr_dynamic_metadata.h"
 #include "libavutil/film_grain_params.h"
 #include "libavutil/mastering_display_metadata.h"
@@ -98,12 +99,11 @@ static int32_t decode_signed_subexp_with_ref(uint32_t sub_exp, int low,
 
 static void read_global_param(AV1DecContext *s, int type, int ref, int idx)
 {
-    uint8_t primary_frame, prev_frame;
+    int primary_frame;
     uint32_t abs_bits, prec_bits, round, prec_diff, sub, mx;
     int32_t r, prev_gm_param;
 
     primary_frame = s->raw_frame_header->primary_ref_frame;
-    prev_frame = s->raw_frame_header->ref_frame_idx[primary_frame];
     abs_bits = AV1_GM_ABS_ALPHA_BITS;
     prec_bits = AV1_GM_ALPHA_PREC_BITS;
 
@@ -113,8 +113,10 @@ static void read_global_param(AV1DecContext *s, int type, int ref, int idx)
      */
     if (s->raw_frame_header->primary_ref_frame == AV1_PRIMARY_REF_NONE)
         prev_gm_param = s->cur_frame.gm_params[ref][idx];
-    else
+    else {
+        int prev_frame = s->raw_frame_header->ref_frame_idx[primary_frame];
         prev_gm_param = s->ref[prev_frame].gm_params[ref][idx];
+    }
 
     if (idx < 2) {
         if (type == AV1_WARP_MODEL_TRANSLATION) {
@@ -773,11 +775,13 @@ static int set_context_with_sequence(AVCodecContext *avctx,
     avctx->profile = seq->seq_profile;
     avctx->level = seq->seq_level_idx[0];
 
-    avctx->color_range =
-        seq->color_config.color_range ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
-    avctx->color_primaries = seq->color_config.color_primaries;
-    avctx->colorspace = seq->color_config.matrix_coefficients;
-    avctx->color_trc = seq->color_config.transfer_characteristics;
+    if (seq->color_config.color_description_present_flag) {
+        avctx->color_range =
+            seq->color_config.color_range ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
+        avctx->color_primaries = seq->color_config.color_primaries;
+        avctx->colorspace = seq->color_config.matrix_coefficients;
+        avctx->color_trc = seq->color_config.transfer_characteristics;
+    }
 
     switch (seq->color_config.chroma_sample_position) {
     case AV1_CSP_VERTICAL:
@@ -890,7 +894,8 @@ static av_cold int av1_decode_init(AVCodecContext *avctx)
 
         seq = ((CodedBitstreamAV1Context *)(s->cbc->priv_data))->sequence_header;
         if (!seq) {
-            av_log(avctx, AV_LOG_WARNING, "No sequence header available.\n");
+            if (!(avctx->extradata[0] & 0x80))
+                av_log(avctx, AV_LOG_WARNING, "No sequence header available in extradata.\n");
             goto end;
         }
 
@@ -1018,7 +1023,7 @@ FF_ENABLE_DEPRECATION_WARNINGS
         if (provider_oriented_code != 0x800)
             return 0; // ignore
 
-        ret = ff_dovi_rpu_parse(&s->dovi, gb.buffer, gb.buffer_end - gb.buffer,
+        ret = ff_dovi_rpu_parse(&s->dovi, gb.buffer, bytestream2_get_bytes_left(&gb),
                                 avctx->err_recognition);
         if (ret < 0) {
             av_log(avctx, AV_LOG_WARNING, "Error parsing DOVI OBU.\n");
@@ -1303,6 +1308,8 @@ static int av1_receive_frame_internal(AVCodecContext *avctx, AVFrame *frame)
             av_refstruct_replace(&s->seq_ref, unit->content_ref);
 
             s->raw_seq = &obu->obu.sequence_header;
+            s->raw_frame_header = NULL;
+            raw_tile_group      = NULL;
 
             ret = set_context_with_sequence(avctx, s->raw_seq);
             if (ret < 0) {
@@ -1338,6 +1345,8 @@ static int av1_receive_frame_internal(AVCodecContext *avctx, AVFrame *frame)
             }
 
             av_refstruct_replace(&s->header_ref, unit->content_ref);
+
+            raw_tile_group      = NULL;
 
             if (unit->type == AV1_OBU_FRAME)
                 s->raw_frame_header = &obu->obu.frame.header;
@@ -1411,8 +1420,11 @@ static int av1_receive_frame_internal(AVCodecContext *avctx, AVFrame *frame)
                 }
             }
             break;
-        case AV1_OBU_TILE_LIST:
         case AV1_OBU_TEMPORAL_DELIMITER:
+            s->raw_frame_header = NULL;
+            raw_tile_group      = NULL;
+        // fall-through
+        case AV1_OBU_TILE_LIST:
         case AV1_OBU_PADDING:
             break;
         case AV1_OBU_METADATA:
@@ -1446,7 +1458,7 @@ static int av1_receive_frame_internal(AVCodecContext *avctx, AVFrame *frame)
             break;
         default:
             av_log(avctx, AV_LOG_DEBUG,
-                   "Unknown obu type: %d (%"SIZE_SPECIFIER" bits).\n",
+                   "Unknown obu type: %d (%zu bits).\n",
                    unit->type, unit->data_size);
         }
 
@@ -1535,7 +1547,7 @@ static int av1_receive_frame(AVCodecContext *avctx, AVFrame *frame)
     return ret;
 }
 
-static void av1_decode_flush(AVCodecContext *avctx)
+static av_cold void av1_decode_flush(AVCodecContext *avctx)
 {
     AV1DecContext *s = avctx->priv_data;
     AV1RawMetadataITUTT35 itut_t35;

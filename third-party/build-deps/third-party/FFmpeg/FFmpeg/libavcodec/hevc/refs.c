@@ -162,7 +162,10 @@ static HEVCFrame *alloc_frame(HEVCContext *s, HEVCLayerContext *l)
         if (ret < 0)
             goto fail;
 
-        frame->rpl = av_refstruct_allocz(s->pkt.nb_nals * sizeof(*frame->rpl));
+        size_t rpl_bytes;
+        if (av_size_mult(s->pkt.nb_nals, sizeof(*frame->rpl), &rpl_bytes) < 0)
+            goto fail;
+        frame->rpl = av_refstruct_allocz(rpl_bytes);
         if (!frame->rpl)
             goto fail;
         frame->nb_rpl_elems = s->pkt.nb_nals;
@@ -470,12 +473,13 @@ static HEVCFrame *generate_missing_ref(HEVCContext *s, HEVCLayerContext *l, int 
         return NULL;
 
     if (!s->avctx->hwaccel) {
+        int nb_planes = l->sps->chroma_format_idc ? 3 : 1;
         if (!l->sps->pixel_shift) {
-            for (i = 0; frame->f->data[i]; i++)
+            for (i = 0; i < nb_planes; i++)
                 memset(frame->f->data[i], 1 << (l->sps->bit_depth - 1),
                        frame->f->linesize[i] * AV_CEIL_RSHIFT(l->sps->height, l->sps->vshift[i]));
         } else {
-            for (i = 0; frame->f->data[i]; i++)
+            for (i = 0; i < nb_planes; i++)
                 for (y = 0; y < (l->sps->height >> l->sps->vshift[i]); y++) {
                     uint8_t *dst = frame->f->data[i] + y * frame->f->linesize[i];
                     AV_WN16(dst, 1 << (l->sps->bit_depth - 1));
@@ -626,10 +630,8 @@ int ff_hevc_frame_nb_refs(const SliceHeader *sh, const HEVCPPS *pps,
             ret += !!(rps->used & (1 << i));
     }
 
-    if (long_rps) {
-        for (i = 0; i < long_rps->nb_refs; i++)
-            ret += !!long_rps->used[i];
-    }
+    for (i = 0; i < long_rps->nb_refs; i++)
+        ret += !!long_rps->used[i];
 
     if (sh->inter_layer_pred) {
         av_assert0(pps->sps->vps->num_direct_ref_layers[layer_idx] < 2);

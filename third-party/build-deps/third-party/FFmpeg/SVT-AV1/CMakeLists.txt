@@ -9,30 +9,17 @@
 # PATENTS file, you can obtain it at https://www.aomedia.org/license/patent-license.
 #
 
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.16...4.1)
 
 if("${CMAKE_CURRENT_SOURCE_DIR}" STREQUAL "${CMAKE_CURRENT_BINARY_DIR}")
     message(WARNING "Building in-source is highly not recommended\n"
                     "Please use the Build folder or create your own.")
 endif()
 
-project(svt-av1 VERSION 3.1.2
+project(svt-av1 VERSION 4.2.0
     LANGUAGES C CXX)
 
 set(VERSION_TAG "")
-
-if(POLICY CMP0063)
-  cmake_policy(SET CMP0063 NEW)
-endif()
-if(POLICY CMP0069)
-    cmake_policy(SET CMP0069 NEW)
-endif()
-if(POLICY CMP0077)
-    cmake_policy(SET CMP0077 NEW)
-endif()
-if(POLICY CMP0174)
-    cmake_policy(SET CMP0174 NEW)
-endif()
 
 set(CMAKE_C_VISIBILITY_PRESET hidden)
 # Default build type to release if the generator does not has its own set of build types
@@ -103,6 +90,7 @@ if(NOT COMPILE_C_ONLY AND HAVE_X86_PLATFORM)
     enable_language(ASM_NASM)
     add_definitions(-DARCH_X86_64=1)
 elseif(NOT COMPILE_C_ONLY AND HAVE_ARM_PLATFORM)
+    enable_language(ASM) # needed for .S files
     set(ARM64_FLAVORS "NEON;ARM_CRC32;NEON_DOTPROD;NEON_I8MM;SVE;SVE2")
     set(ARM_CRC32_DEFAULT_FLAG "-march=armv8-a+crc")
     set(NEON_DOTPROD_DEFAULT_FLAG "-march=armv8.2-a+dotprod")
@@ -191,13 +179,17 @@ include(GNUInstallDirs)
 include(CheckCCompilerFlag)
 include(CheckCXXCompilerFlag)
 
-set(CMAKE_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/Bin/${CMAKE_BUILD_TYPE}/" CACHE PATH "Location to write the resulting binaries to")
+# if(PROJECT_IS_TOP_LEVEL) requires CMake 3.21
+if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
+    set(CMAKE_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/Bin/${CMAKE_BUILD_TYPE}/" CACHE PATH "Location to write the resulting binaries to")
 
-set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_OUTPUT_DIRECTORY})
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_OUTPUT_DIRECTORY})
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_OUTPUT_DIRECTORY})
+    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_OUTPUT_DIRECTORY})
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_OUTPUT_DIRECTORY})
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_OUTPUT_DIRECTORY})
+endif()
 
-set(REQUIRES_PRIVATE "")
+set(PC_LIBS_PRIVATE)
+set(PC_REQUIRES_PRIVATE)
 
 #Clang support, required to build static with LTO
 if(CMAKE_C_COMPILER_ID MATCHES "Clang" AND UNIX AND NOT APPLE)
@@ -237,6 +229,14 @@ option(BUILD_SHARED_LIBS "Build shared libraries (DLLs)." ON)
 message(STATUS "BUILD_SHARED_LIBS: ${BUILD_SHARED_LIBS}")
 
 option(BUILD_TESTING "Build SvtAv1UnitTests, SvtAv1ApiTests, and SvtAv1E2ETests unit tests")
+if(BUILD_TESTING)
+    # Unit tests rely on C reference functions (they call
+    # svt_aom_setup_*_rtcd_internal(0) to populate the C path), so the
+    # guaranteed-SIMD C-stripping/devirtualization must be disabled here.
+    # Applied globally and before add_subdirectory(Source/Lib) so it reaches
+    # the SvtAv1Enc library compile that the tests link against.
+    add_definitions(-DSVT_AV1_UNIT_TEST_BUILD=1)
+endif()
 option(COVERAGE "Generate coverage report")
 if(NOT MSVC)
     option(SVT_AV1_PGO "Enable profile guided optimization. Creates the RunPGO and CompilePGO targets")
@@ -246,8 +246,10 @@ if(NOT MSVC)
     mark_as_advanced(SVT_INTERNAL_PGO_GENERATE SVT_INTERNAL_PGO_USE)
     set(SVT_AV1_PGO_DIR "${CMAKE_BINARY_DIR}" CACHE PATH "Path to the directory passed to -fprofile-dir for use with profile guided optimization")
     set(SVT_AV1_PGO_CUSTOM_VIDEOS "" CACHE STRING "Semi-colon separated list of directories with y4m videos to run PGO on instead of objective-1-fast")
+    option(SVT_AV1_NVTX "Compile NVTX3 ranges + thread names for NVIDIA Nsight Systems profiling (CPU sampling, PMU events, OS runtime, thread states)" OFF)
 else()
     set(SVT_AV1_PGO OFF)
+    set(SVT_AV1_NVTX OFF)
 endif()
 
 if(MSVC AND SVT_AV1_PGO)
@@ -330,7 +332,7 @@ if(UNIX)
             set(CMAKE_C_ARCHIVE_FINISH   "<CMAKE_RANLIB> -no_warning_for_no_symbols -c <TARGET>")
             set(CMAKE_CXX_ARCHIVE_FINISH "<CMAKE_RANLIB> -no_warning_for_no_symbols -c <TARGET>")
         endif()
-    else()
+    elseif(NOT EMSCRIPTEN)
         set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -z noexecstack -z relro -z now")
     endif()
 endif()
@@ -433,8 +435,13 @@ else()
     if(MINGW)
         check_flags_add(C -mxsave -fno-asynchronous-unwind-tables)
     else()
-        check_both_flags_add(-fstack-protector-strong)
-        check_both_flags_add(PREPEND -fno-stack-clash-protection)
+        option(ENABLE_STACK_PROTECTOR "Build with -fstack-protector-strong" ON)
+        if(ENABLE_STACK_PROTECTOR)
+            check_both_flags_add(-fstack-protector-strong)
+        endif()
+        if(NOT EMSCRIPTEN)
+            check_both_flags_add(PREPEND -fno-stack-clash-protection)
+        endif()
     endif()
     check_both_flags_add(-mno-avx)
 endif()
@@ -581,10 +588,28 @@ else()
             HAVE_BUILTIN_EXPECT=0)
 endif()
 
+# try to see if __builtin_assume is available (Clang, GCC 13+)
+check_c_source_compiles("
+    int main() {
+        int x = 42;
+        __builtin_assume(x > 0);
+        return 0;
+    }" HAVE_BUILTIN_ASSUME)
+if(HAVE_BUILTIN_ASSUME)
+    set_property(DIRECTORY .
+        APPEND
+        PROPERTY COMPILE_DEFINITIONS
+            HAVE_BUILTIN_ASSUME=1)
+else()
+    set_property(DIRECTORY .
+        APPEND
+        PROPERTY COMPILE_DEFINITIONS
+            HAVE_BUILTIN_ASSUME=0)
+endif()
+
 include_directories(.)
 
 # Find out if we have threading available
-set(CMAKE_THREAD_PREFER_PTHREADS ON)
 find_package(Threads)
 
 check_symbol_exists(elf_aux_info "sys/auxv.h" HAVE_ELF_AUX_INFO)
@@ -634,6 +659,11 @@ if(NOT IS_ABSOLUTE "${SVT_AV1_INCLUDEDIR}")
 endif()
 if(NOT IS_ABSOLUTE "${CMAKE_INSTALL_LIBDIR}")
     string(PREPEND SVT_AV1_LIBDIR "\${exec_prefix}/")
+endif()
+
+if(UNIX AND NOT APPLE)
+    list(APPEND PLATFORM_LIBS Threads::Threads m)
+    list(APPEND PC_LIBS_PRIVATE ${CMAKE_THREAD_LIBS_INIT} -lm)
 endif()
 
 # Add Subdirectories
@@ -722,5 +752,3 @@ if(BUILD_TESTING)
 endif()
 
 add_subdirectory(third_party/fastfeat)
-
-install(DIRECTORY ${PROJECT_SOURCE_DIR}/Source/API/ DESTINATION "${CMAKE_INSTALL_FULL_INCLUDEDIR}/svt-av1" FILES_MATCHING PATTERN "*.h")

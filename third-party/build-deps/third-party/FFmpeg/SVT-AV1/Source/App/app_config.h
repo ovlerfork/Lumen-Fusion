@@ -24,6 +24,10 @@
 #define ftello _ftelli64
 #endif
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 // Define Cross-Platform 64-bit fseek() and ftell()
 /** The AppExitConditionType type is used to define the App main loop exit
 conditions.
@@ -38,6 +42,7 @@ typedef enum AppExitConditionType {
 the App.
 */
 typedef enum AppPortActiveType { APP_PortActive = 0, APP_PortInactive } AppPortActiveType;
+
 typedef enum EncPass {
     ENC_SINGLE_PASS, //single pass mode
     ENC_FIRST_PASS, // first pass of multi pass mode
@@ -45,9 +50,13 @@ typedef enum EncPass {
     MAX_ENC_PASS = 2,
 } EncPass;
 
+typedef enum OutputFormat {
+    OUTPUT_FORMAT_IVF = 0,
+    OUTPUT_FORMAT_OBU,
+} OutputFormat;
+
 #define WARNING_LENGTH 100
 
-#define MAX_CHANNEL_NUMBER 6U
 #define MAX_NUM_TOKENS 210
 
 #ifdef _WIN32
@@ -90,6 +99,11 @@ typedef struct EbPerformanceContext {
 
     uint64_t sum_qp;
 
+    double vbv_buffer_bits;
+    double vbv_delay_max_s;
+    double vbv_delay_sum_s;
+    int    vbv_delay_violations;
+
 } EbPerformanceContext;
 
 typedef struct MemMapFile {
@@ -110,8 +124,8 @@ typedef struct MemMapFile {
 // list of frames that are forced to be key frames
 // pairs with force_key_frames
 struct forced_key_frames {
-    char    **specifiers; // list of specifiers to use to convert into frames
-    uint64_t *frames;
+    char**    specifiers; // list of specifiers to use to convert into frames
+    uint64_t* frames;
     size_t    count;
 };
 
@@ -119,22 +133,22 @@ typedef struct EbConfig {
     /****************************************
      * File I/O
      ****************************************/
-    FILE      *input_file;
+    FILE*      input_file;
     MemMapFile mmap; //memory mapped file handler
     bool       input_file_is_fifo;
-    FILE      *bitstream_file;
-    FILE      *recon_file;
-    FILE      *error_log_file;
-    FILE      *stat_file;
-    FILE      *qp_file;
+    FILE*      bitstream_file;
+    FILE*      recon_file;
+    FILE*      error_log_file;
+    FILE*      stat_file;
+    FILE*      qp_file;
     /* two pass */
-    const char *stats;
-    FILE       *input_stat_file;
-    FILE       *output_stat_file;
+    const char* stats;
+    FILE*       input_stat_file;
+    FILE*       output_stat_file;
     bool        y4m_input;
     char        y4m_buf[9];
 
-    uint8_t progress; // 0 = no progress output, 1 = normal, 2 = aomenc style verbose progress
+    uint8_t progress; // 0 = no progress output, 1 = normal, 2 = detailed progress
     /****************************************
      * Computational Performance Data
      ****************************************/
@@ -150,7 +164,7 @@ typedef struct EbConfig {
 
     int32_t   frames_encoded;
     int32_t   buffered_input;
-    uint8_t **sequence_buffer;
+    uint8_t** sequence_buffer;
 
     uint32_t injector_frame_rate;
     uint32_t injector;
@@ -162,6 +176,8 @@ typedef struct EbConfig {
     uint64_t processed_byte_count;
 
     uint64_t ivf_count;
+
+    OutputFormat output_format;
 
     struct forced_key_frames forced_keyframes;
 
@@ -175,23 +191,20 @@ typedef struct EbConfig {
     AppPortActiveType output_stream_port_active;
 
     // Component Handle
-    EbComponentType *svt_encoder_handle;
+    EbComponentType* svt_encoder_handle;
 
     // Buffer Pools
-    EbBufferHeaderType *input_buffer_pool;
-    EbBufferHeaderType *recon_buffer;
+    EbBufferHeaderType* input_buffer_pool;
+    EbBufferHeaderType* recon_buffer;
 
-    FILE         *roi_map_file;
-    SvtAv1RoiMap *roi_map;
+    FILE*         roi_map_file;
+    SvtAv1RoiMap* roi_map;
 
-    // Instance Index
-    uint8_t instance_idx;
-
-    char *fgs_table_path;
+    char* fgs_table_path;
 } EbConfig;
 
 typedef struct EncChannel {
-    EbConfig            *app_cfg; // Encoder Configuration
+    EbConfig*            app_cfg; // Encoder Configuration
     EbErrorType          return_error; // Error Handling
     AppExitConditionType exit_cond_output; // Processing loop exit condition
     AppExitConditionType exit_cond_recon; // Processing loop exit condition
@@ -208,17 +221,21 @@ typedef enum MultiPassModes {
 typedef struct EncApp {
     SvtAv1FixedBuf rc_twopasses_stats;
 } EncApp;
-EbConfig *svt_config_ctor();
-void      svt_config_dtor(EbConfig *app_cfg);
 
-EbErrorType     enc_channel_ctor(EncChannel *c);
-void            enc_channel_dctor(EncChannel *c, uint32_t inst_cnt);
-EbErrorType     read_command_line(int32_t argc, char *const argv[], EncChannel *channels, uint32_t num_channels);
-int             get_version(int argc, char *argv[]);
-extern uint32_t get_help(int32_t argc, char *const argv[]);
-extern uint32_t get_color_help(int32_t argc, char *const argv[]);
-extern uint32_t get_number_of_channels(int32_t argc, char *const argv[]);
-uint32_t        get_passes(int32_t argc, char *const argv[], EncPass enc_pass[MAX_ENC_PASS]);
-EbErrorType     handle_stats_file(EbConfig *app_cfg, EncPass pass, const SvtAv1FixedBuf *rc_stats_buffer,
-                                  uint32_t channel_number);
+EbConfig* svt_config_ctor();
+void      svt_config_dtor(EbConfig* app_cfg);
+
+EbErrorType     enc_channel_ctor(EncChannel* c);
+void            enc_channel_dctor(EncChannel* c);
+EbErrorType     read_command_line(int32_t argc, char* const argv[], EncChannel* channel);
+int             get_version(int argc, char* const argv[]);
+extern uint32_t get_help(int32_t argc, char* const argv[]);
+extern uint32_t get_color_help(int32_t argc, char* const argv[]);
+uint32_t        get_passes(int32_t argc, char* const argv[], EncPass enc_pass[MAX_ENC_PASS]);
+EbErrorType     handle_stats_file(EbConfig* app_cfg, EncPass pass, const SvtAv1FixedBuf* rc_stats_buffer);
+
+#ifdef __cplusplus
+}
+#endif
+
 #endif //EbAppConfig_h

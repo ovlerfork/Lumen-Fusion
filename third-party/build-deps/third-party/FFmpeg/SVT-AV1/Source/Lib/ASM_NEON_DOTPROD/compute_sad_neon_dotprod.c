@@ -1,4 +1,5 @@
 /*
+ * Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * Copyright (c) 2023, Alliance for Open Media. All rights reserved
  *
  * This source code is subject to the terms of the BSD 2 Clause License and
@@ -23,7 +24,7 @@
 DECLARE_ALIGNED(16, static const uint8_t, kPermTable[32]) = {0, 1, 2, 3, 1, 2, 3, 4, 2, 3, 4, 5, 3, 4, 5, 6,
                                                              4, 5, 6, 7, 5, 6, 7, 8, 6, 7, 8, 9, 7, 8, 9, 10};
 
-static inline uint32x4_t sadwxhx4d_neon_dotprod(const uint8_t *src, uint32_t src_stride, const uint8_t *ref,
+static inline uint32x4_t sadwxhx4d_neon_dotprod(const uint8_t* src, uint32_t src_stride, const uint8_t* ref,
                                                 uint32_t ref_stride, uint32_t width, uint32_t height) {
     uint32x4_t sum_u32[4] = {vdupq_n_u32(0), vdupq_n_u32(0), vdupq_n_u32(0), vdupq_n_u32(0)};
     uint16x8_t sum_u16[4] = {vdupq_n_u16(0), vdupq_n_u16(0), vdupq_n_u16(0), vdupq_n_u16(0)};
@@ -33,8 +34,8 @@ static inline uint32x4_t sadwxhx4d_neon_dotprod(const uint8_t *src, uint32_t src
     do {
         int w = width;
 
-        const uint8_t *src_ptr = src;
-        const uint8_t *ref_ptr = ref;
+        const uint8_t* src_ptr = src;
+        const uint8_t* ref_ptr = ref;
 
         while (w >= 16) {
             const uint8x16_t s = vld1q_u8(src_ptr);
@@ -54,6 +55,7 @@ static inline uint32x4_t sadwxhx4d_neon_dotprod(const uint8_t *src, uint32_t src
             sum_u16[1]        = vabal_u8(sum_u16[1], s, vld1_u8(ref_ptr + 1));
             sum_u16[2]        = vabal_u8(sum_u16[2], s, vld1_u8(ref_ptr + 2));
             sum_u16[3]        = vabal_u8(sum_u16[3], s, vld1_u8(ref_ptr + 3));
+
             src_ptr += 8;
             ref_ptr += 8;
             w -= 8;
@@ -61,7 +63,7 @@ static inline uint32x4_t sadwxhx4d_neon_dotprod(const uint8_t *src, uint32_t src
 
         if (w >= 4) {
             uint8x16_t perm_tbl = vld1q_u8(kPermTable);
-            uint8x16_t s        = vreinterpretq_u8_u32(vld1q_dup_u32((const uint32_t *)src_ptr));
+            uint8x16_t s        = vreinterpretq_u8_u32(vld1q_dup_u32((const uint32_t*)src_ptr));
             uint8x16_t r        = vqtbl1q_u8(vld1q_u8(ref_ptr), perm_tbl);
             uint8x16_t abs      = vabdq_u8(s, r);
             sum4                = vdotq_u32(sum4, abs, vdupq_n_u8(1));
@@ -87,57 +89,10 @@ static inline uint32x4_t sadwxhx4d_neon_dotprod(const uint8_t *src, uint32_t src
     return vaddq_u32(vaddw_u16(sum4, vget_low_u16(sum)), horizontal_add_4d_u32x4(sum_u32));
 }
 
-static inline uint32_t sad_anywxh_neon_dotprod(const uint8_t *src, uint32_t src_stride, const uint8_t *ref,
-                                               uint32_t ref_stride, uint32_t width, uint32_t height) {
-    uint16x8_t sum_u16 = vdupq_n_u16(0);
-    uint32x4_t sum_u32 = vdupq_n_u32(0);
-    uint32_t   sum     = 0;
-
-    do {
-        int w = width;
-
-        const uint8_t *src_ptr = src;
-        const uint8_t *ref_ptr = ref;
-
-        while (w >= 16) {
-            const uint8x16_t s = vld1q_u8(src_ptr);
-            sad16_neon_dotprod(s, vld1q_u8(ref_ptr), &sum_u32);
-
-            src_ptr += 16;
-            ref_ptr += 16;
-            w -= 16;
-        }
-
-        if (w >= 8) {
-            const uint8x8_t s = vld1_u8(src_ptr);
-            sum_u16           = vabal_u8(sum_u16, s, vld1_u8(ref_ptr));
-            src_ptr += 8;
-            ref_ptr += 8;
-            w -= 8;
-        }
-
-        if (w >= 4) {
-            const uint8x8_t s = load_u8_4x1(src_ptr);
-            sum_u16           = vabal_u8(sum_u16, s, load_u8_4x1(ref_ptr));
-            src_ptr += 4;
-            ref_ptr += 4;
-            w -= 4;
-        }
-
-        while (--w >= 0) { sum += EB_ABS_DIFF(src_ptr[w], ref_ptr[w]); }
-
-        src += src_stride;
-        ref += ref_stride;
-    } while (--height != 0);
-
-    sum_u32 = vpadalq_u16(sum_u32, sum_u16);
-    return sum + vaddvq_u32(sum_u32);
-}
-
-static inline void svt_sad_loop_kernelwxh_neon_dotprod(uint8_t *src, uint32_t src_stride, uint8_t *ref,
+static inline void svt_sad_loop_kernelwxh_neon_dotprod(uint8_t* src, uint32_t src_stride, uint8_t* ref,
                                                        uint32_t ref_stride, uint32_t block_width, uint32_t block_height,
-                                                       uint64_t *best_sad, int16_t *x_search_center,
-                                                       int16_t *y_search_center, uint32_t src_stride_raw,
+                                                       uint64_t* best_sad, int16_t* x_search_center,
+                                                       int16_t* y_search_center, uint32_t src_stride_raw,
                                                        int16_t search_area_width, int16_t search_area_height) {
     for (int16_t y_search_index = 0; y_search_index < search_area_height; y_search_index++) {
         for (int16_t x_search_index = 0; x_search_index < search_area_width; x_search_index += 8) {
@@ -154,10 +109,10 @@ static inline void svt_sad_loop_kernelwxh_neon_dotprod(uint8_t *src, uint32_t sr
     }
 }
 
-static inline void svt_sad_loop_kernelwxh_small_neon_dotprod(uint8_t *src, uint32_t src_stride, uint8_t *ref,
+static inline void svt_sad_loop_kernelwxh_small_neon_dotprod(uint8_t* src, uint32_t src_stride, uint8_t* ref,
                                                              uint32_t ref_stride, uint32_t block_width,
-                                                             uint32_t block_height, uint64_t *best_sad,
-                                                             int16_t *x_search_center, int16_t *y_search_center,
+                                                             uint32_t block_height, uint64_t* best_sad,
+                                                             int16_t* x_search_center, int16_t* y_search_center,
                                                              uint32_t src_stride_raw, int16_t search_area_width,
                                                              int16_t search_area_height) {
     for (int16_t y_search_index = 0; y_search_index < search_area_height; y_search_index++) {
@@ -179,9 +134,9 @@ static inline void svt_sad_loop_kernelwxh_small_neon_dotprod(uint8_t *src, uint3
     }
 }
 
-void svt_sad_loop_kernel_neon_dotprod(uint8_t *src, uint32_t src_stride, uint8_t *ref, uint32_t ref_stride,
-                                      uint32_t block_height, uint32_t block_width, uint64_t *best_sad,
-                                      int16_t *x_search_center, int16_t *y_search_center, uint32_t src_stride_raw,
+void svt_sad_loop_kernel_neon_dotprod(uint8_t* src, uint32_t src_stride, uint8_t* ref, uint32_t ref_stride,
+                                      uint32_t block_height, uint32_t block_width, uint64_t* best_sad,
+                                      int16_t* x_search_center, int16_t* y_search_center, uint32_t src_stride_raw,
                                       uint8_t skip_search_line, int16_t search_area_width, int16_t search_area_height) {
     *best_sad = UINT64_MAX;
     /* Most of the time search_area_width is a multiple of 8, so specialize for this case so that we run only sad4d. */

@@ -1338,6 +1338,13 @@ static int ebml_parse(MatroskaDemuxContext *matroska,
 
             if ((unsigned)list->nb_elem + 1 >= UINT_MAX / syntax->list_elem_size)
                 return AVERROR(ENOMEM);
+            if (syntax->id == MATROSKA_ID_TRACKENTRY &&
+                list->nb_elem >= matroska->ctx->max_streams) {
+                av_log(matroska->ctx, AV_LOG_ERROR,
+                       "Number of tracks exceeds max_streams (%d)\n",
+                       matroska->ctx->max_streams);
+                return AVERROR(EINVAL);
+            }
             newelem = av_fast_realloc(list->elem,
                                       &list->alloc_elem_size,
                                       (list->nb_elem + 1) * syntax->list_elem_size);
@@ -1679,7 +1686,7 @@ static int matroska_decode_buffer(uint8_t **buf, int *buf_size,
     uint8_t *data = *buf;
     int isize = *buf_size;
     uint8_t *pkt_data = NULL;
-    uint8_t av_unused *newpktdata;
+    av_unused uint8_t *newpktdata;
     int pkt_size = isize;
     int result = 0;
     int olen;
@@ -2783,6 +2790,10 @@ static int mka_parse_audio_codec(MatroskaTrack *track, AVCodecParameters *par,
             par->block_align  = track->audio.sub_packet_size;
             *extradata_offset = 78;
         }
+        if (par->block_align <= 0 ||
+            track->audio.sub_packet_h * (unsigned)track->audio.frame_size > INT_MAX ||
+            track->audio.frame_size * track->audio.sub_packet_h < par->block_align)
+            return AVERROR_INVALIDDATA;
         track->audio.buf = av_malloc_array(track->audio.sub_packet_h,
                                             track->audio.frame_size);
         if (!track->audio.buf)
@@ -2860,6 +2871,7 @@ static int mka_parse_audio(MatroskaTrack *track, AVStream *st,
                                             (AVRational){1, 1000000000},
                                             (AVRational){1, par->codec_id == AV_CODEC_ID_OPUS ?
                                                             48000 : par->sample_rate});
+        sti->skip_samples = par->initial_padding;
     }
     if (track->seek_preroll > 0) {
         par->seek_preroll = av_rescale_q(track->seek_preroll,
@@ -3168,11 +3180,20 @@ static int matroska_parse_tracks(AVFormatContext *s)
                     track->default_duration = default_duration;
                 }
             }
-            if (track->video.pixel_cropl >= INT_MAX - track->video.pixel_cropr ||
+            int has_dimensions = track->video.pixel_width || track->video.pixel_height;
+            if ((matroska->ctx->strict_std_compliance >= FF_COMPLIANCE_STRICT &&
+                 (!track->video.pixel_width || !track->video.pixel_height)) ||
+                (track->video.pixel_cropl >= INT_MAX - track->video.pixel_cropr ||
                 track->video.pixel_cropt >= INT_MAX - track->video.pixel_cropb ||
-                (track->video.pixel_cropl + track->video.pixel_cropr) >= track->video.pixel_width ||
-                (track->video.pixel_cropt + track->video.pixel_cropb) >= track->video.pixel_height)
+                (track->video.pixel_cropl + track->video.pixel_cropr) >= track->video.pixel_width  + !has_dimensions ||
+                (track->video.pixel_cropt + track->video.pixel_cropb) >= track->video.pixel_height + !has_dimensions)) {
+                av_log(matroska->ctx, AV_LOG_ERROR,
+                       "Invalid coded dimensions %"PRId64"x%"PRId64" [%"PRId64", %"PRId64", %"PRId64", %"PRId64"].\n",
+                       track->video.pixel_width, track->video.pixel_height,
+                       track->video.pixel_cropl, track->video.pixel_cropr,
+                       track->video.pixel_cropt, track->video.pixel_cropb);
                 return AVERROR_INVALIDDATA;
+            }
             track->video.cropped_width  = track->video.pixel_width  -
                                           track->video.pixel_cropl  - track->video.pixel_cropr;
             track->video.cropped_height = track->video.pixel_height -
@@ -4444,6 +4465,11 @@ static CueDesc get_cue_desc(AVFormatContext *s, int64_t ts, int64_t cues_start) 
         // Clusters.
         cue_desc.end_offset = cues_start - matroska->segment_start;
     }
+
+    if (cue_desc.end_time_ns < cue_desc.start_time_ns ||
+        cue_desc.end_time_ns - (uint64_t)cue_desc.start_time_ns > INT64_MAX)
+        return (CueDesc) {-1, -1, -1, -1};
+
     return cue_desc;
 }
 
@@ -4635,11 +4661,14 @@ static int64_t webm_dash_manifest_compute_bandwidth(AVFormatContext *s, int64_t 
             bits_per_second = 0.0;
             do {
                 int64_t desc_bytes = desc_end.end_offset - desc_beg.start_offset;
-                int64_t desc_ns = desc_end.end_time_ns - desc_beg.start_time_ns;
                 double desc_sec, calc_bits_per_second, percent, mod_bits_per_second;
                 if (desc_bytes <= 0 || desc_bytes > INT64_MAX/8)
                     return -1;
+                if (desc_end.end_time_ns <= desc_beg.start_time_ns ||
+                    desc_end.end_time_ns - (uint64_t)desc_beg.start_time_ns > INT64_MAX)
+                    return -1;
 
+                int64_t desc_ns = desc_end.end_time_ns - desc_beg.start_time_ns;
                 desc_sec = desc_ns / nano_seconds_per_second;
                 calc_bits_per_second = (desc_bytes * 8) / desc_sec;
 

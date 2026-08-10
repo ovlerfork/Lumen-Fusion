@@ -6,28 +6,40 @@
 # Ideally, both are the same, which might not always be possible: https://github.com/cpm-cmake/CPM.cmake/issues/603
 # This is needed to support CPM_USE_LOCAL_PACKAGES
 
-# TODO: update dependencies with renovate
-# https://joht.github.io/johtizen/automation/2022/08/03/keep-your-cpp-dependencies-up-to-date.html
+# Renovate-bot will update the versions and hashes in this file when a new version of a dependency is released.
+# The comments above each dependency are used by renovate to identify the dependencies and extract the version numbers.
+# See https://github.com/LizardByte/.github/blob/master/renovate-config.json5 for the configuration of renovate.
+#
+# Expected dependency structure for new entries:
+# - Start each block with a human-readable comment, for example `# Example dependency`.
+# - Follow it with consecutive renovate metadata comments.
+# - The first metadata line must start with `# renovate:` and include `datasource=` and `depName=`.
+# - Optional metadata keys are `packageName=`, `versioning=`, `extractVersion=`, and `registryUrl=`.
+# - Optional metadata may stay on the `# renovate:` line or continue on the next consecutive `#` lines.
+# - Keep metadata keys in this order: `datasource`, `depName`, `packageName`, `versioning`,
+#   `extractVersion`, `registryUrl`.
+# - After metadata, declare the tracked value with `set(NAME_VERSION ...)` or `set(NAME_TAG ...)`.
+# - If the dependency also tracks a SHA256, keep `set(NAME_SHA256 ...)` immediately after the
+#   matching `NAME_VERSION` or `NAME_TAG` line with no unrelated lines between them.
+# - Keep `CPMDeclarePackage(...)` below the tracked values.
+#
+# Example layout:
+# - `# Example dependency`
+# - `# renovate: datasource=github-tags depName=owner/repo`
+# - `# versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$`
+# - `set(EXAMPLE_TAG v1.2.3)`
+# - `set(EXAMPLE_SHA256 <sha256>)`
+# - `CPMDeclarePackage(...)`
 
 set(PATCH_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/patches")
 
-# Boost
-CPMDeclarePackage(Boost
-        NAME Boost
-        VERSION 1.87.0
-        URL https://github.com/boostorg/boost/releases/download/boost-1.87.0/boost-1.87.0-cmake.tar.xz
-        URL_HASH SHA256=7da75f171837577a52bbf217e17f8ea576c7c246e4594d617bfde7fafd408be5
-        PATCHES
-            "${PATCH_DIRECTORY}/boost/01-fix-arm64-asm-compile.patch"
-            "${PATCH_DIRECTORY}/boost/02-no-link-libatomic-clang-windows.patch"
-        DOWNLOAD_ONLY YES
-)
-
 # libva
+# renovate: datasource=github-tags depName=intel/libva
+set(LIBVA_VERSION 2.24.1)
 CPMDeclarePackage(libva
         NAME libva
-        VERSION 2.23.0
+        VERSION ${LIBVA_VERSION}
         GIT_REPOSITORY https://github.com/intel/libva.git
-        GIT_TAG 2.23.0
+        GIT_TAG ${LIBVA_VERSION}
         DOWNLOAD_ONLY YES
 )

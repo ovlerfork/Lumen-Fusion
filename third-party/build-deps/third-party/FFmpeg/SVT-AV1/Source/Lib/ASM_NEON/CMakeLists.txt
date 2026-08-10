@@ -12,7 +12,6 @@
 # ASM_NEON Directory CMakeLists.txt
 
 # Include Encoder Subdirectories
-enable_language(ASM) # needed for .S files
 add_library(ASM_NEON OBJECT)
 target_sources(
   ASM_NEON
@@ -30,6 +29,8 @@ target_sources(
   PUBLIC cfl_neon.c
   PUBLIC compound_convolve_neon.c
   PUBLIC compute_sad_neon.c
+  PUBLIC sad_x4d_neon.c
+  PUBLIC ssim_neon.c
   PUBLIC convolve_neon.c
   PUBLIC convolve_scale_neon.c
   PUBLIC corner_match_neon.c
@@ -42,6 +43,7 @@ target_sources(
   PUBLIC highbd_convolve_neon.c
   PUBLIC highbd_convolve_scale_neon.c
   PUBLIC highbd_fwd_txfm_neon.c
+  PUBLIC highbd_hadamard_neon.c
   PUBLIC highbd_inter_prediction_neon.c
   PUBLIC highbd_intra_prediction_neon.c
   PUBLIC highbd_inv_txfm_neon.c
@@ -57,6 +59,8 @@ target_sources(
   PUBLIC inter_prediction_neon.c
   PUBLIC intra_prediction_neon.c
   PUBLIC itx.S
+  PUBLIC lowbd_fwd_txfm2d_neon.c
+  PUBLIC mem_neon.c
   PUBLIC obmc_sad_neon.c
   PUBLIC obmc_variance_neon.c
   PUBLIC pack_unpack_intrin_neon.c

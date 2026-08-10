@@ -43,7 +43,6 @@
 #include "codec_desc.h"
 #include "encode.h"
 #include "internal.h"
-#include "packet_internal.h"
 
 #define CHECK_CU(x) FF_CUDA_CHECK_DL(avctx, dl_fn->cuda_dl, x)
 
@@ -264,8 +263,10 @@ static void nvenc_map_preset(NvencContext *ctx)
 
 static void nvenc_print_driver_requirement(AVCodecContext *avctx, int level)
 {
-#if NVENCAPI_CHECK_VERSION(13, 1)
+#if NVENCAPI_CHECK_VERSION(13, 2)
     const char *minver = "(unknown)";
+#elif NVENCAPI_CHECK_VERSION(13, 1)
+    const char *minver = "610.00";
 #elif NVENCAPI_CHECK_VERSION(13, 0)
     const char *minver = "570.0";
 #elif NVENCAPI_CHECK_VERSION(12, 2)
@@ -337,6 +338,16 @@ static void nvenc_print_driver_requirement(AVCodecContext *avctx, int level)
 #endif
     av_log(avctx, level, "The minimum required Nvidia driver for nvenc is %s or newer\n", minver);
 }
+
+#if NVENCAPI_CHECK_VERSION(12, 0)
+#define to_nv_color_matrix(n)   (NV_ENC_VUI_MATRIX_COEFFS)(n)
+#define to_nv_color_pri(n)      (NV_ENC_VUI_COLOR_PRIMARIES)(n)
+#define to_nv_color_trc(n)      (NV_ENC_VUI_TRANSFER_CHARACTERISTIC)(n)
+#else
+#define to_nv_color_matrix(n)   (uint32_t)(n)
+#define to_nv_color_pri(n)      (uint32_t)(n)
+#define to_nv_color_trc(n)      (uint32_t)(n)
+#endif
 
 static av_cold int nvenc_load_libraries(AVCodecContext *avctx)
 {
@@ -1267,14 +1278,14 @@ static av_cold int nvenc_setup_h264_config(AVCodecContext *avctx)
     const AVPixFmtDescriptor *pixdesc = av_pix_fmt_desc_get(ctx->data_pix_fmt);
 
     if ((pixdesc->flags & AV_PIX_FMT_FLAG_RGB) && !IS_GBRP(ctx->data_pix_fmt)) {
-        vui->colourMatrix = AVCOL_SPC_BT470BG;
-        vui->colourPrimaries = avctx->color_primaries;
-        vui->transferCharacteristics = avctx->color_trc;
+        vui->colourMatrix = to_nv_color_matrix(AVCOL_SPC_BT470BG);
+        vui->colourPrimaries = to_nv_color_pri(avctx->color_primaries);
+        vui->transferCharacteristics = to_nv_color_trc(avctx->color_trc);
         vui->videoFullRangeFlag = 0;
     } else {
-        vui->colourMatrix = IS_GBRP(ctx->data_pix_fmt) ? AVCOL_SPC_RGB : avctx->colorspace;
-        vui->colourPrimaries = avctx->color_primaries;
-        vui->transferCharacteristics = avctx->color_trc;
+        vui->colourMatrix = to_nv_color_matrix(IS_GBRP(ctx->data_pix_fmt) ? AVCOL_SPC_RGB : avctx->colorspace);
+        vui->colourPrimaries = to_nv_color_pri(avctx->color_primaries);
+        vui->transferCharacteristics = to_nv_color_trc(avctx->color_trc);
         vui->videoFullRangeFlag = (avctx->color_range == AVCOL_RANGE_JPEG
             || ctx->data_pix_fmt == AV_PIX_FMT_YUVJ420P || ctx->data_pix_fmt == AV_PIX_FMT_YUVJ422P || ctx->data_pix_fmt == AV_PIX_FMT_YUVJ444P);
     }
@@ -1458,14 +1469,14 @@ static av_cold int nvenc_setup_hevc_config(AVCodecContext *avctx)
     const AVPixFmtDescriptor *pixdesc = av_pix_fmt_desc_get(ctx->data_pix_fmt);
 
     if ((pixdesc->flags & AV_PIX_FMT_FLAG_RGB) && !IS_GBRP(ctx->data_pix_fmt)) {
-        vui->colourMatrix = AVCOL_SPC_BT470BG;
-        vui->colourPrimaries = avctx->color_primaries;
-        vui->transferCharacteristics = avctx->color_trc;
+        vui->colourMatrix = to_nv_color_matrix(AVCOL_SPC_BT470BG);
+        vui->colourPrimaries = to_nv_color_pri(avctx->color_primaries);
+        vui->transferCharacteristics = to_nv_color_trc(avctx->color_trc);
         vui->videoFullRangeFlag = 0;
     } else {
-        vui->colourMatrix = IS_GBRP(ctx->data_pix_fmt) ? AVCOL_SPC_RGB : avctx->colorspace;
-        vui->colourPrimaries = avctx->color_primaries;
-        vui->transferCharacteristics = avctx->color_trc;
+        vui->colourMatrix = to_nv_color_matrix(IS_GBRP(ctx->data_pix_fmt) ? AVCOL_SPC_RGB : avctx->colorspace);
+        vui->colourPrimaries = to_nv_color_pri(avctx->color_primaries);
+        vui->transferCharacteristics = to_nv_color_trc(avctx->color_trc);
         vui->videoFullRangeFlag = (avctx->color_range == AVCOL_RANGE_JPEG
             || ctx->data_pix_fmt == AV_PIX_FMT_YUVJ420P || ctx->data_pix_fmt == AV_PIX_FMT_YUVJ422P || ctx->data_pix_fmt == AV_PIX_FMT_YUVJ444P);
     }
@@ -1656,14 +1667,14 @@ static av_cold int nvenc_setup_av1_config(AVCodecContext *avctx)
     const AVPixFmtDescriptor *pixdesc = av_pix_fmt_desc_get(ctx->data_pix_fmt);
 
     if ((pixdesc->flags & AV_PIX_FMT_FLAG_RGB) && !IS_GBRP(ctx->data_pix_fmt)) {
-        av1->matrixCoefficients = AVCOL_SPC_BT470BG;
-        av1->colorPrimaries = avctx->color_primaries;
-        av1->transferCharacteristics = avctx->color_trc;
+        av1->matrixCoefficients = to_nv_color_matrix(AVCOL_SPC_BT470BG);
+        av1->colorPrimaries = to_nv_color_pri(avctx->color_primaries);
+        av1->transferCharacteristics = to_nv_color_trc(avctx->color_trc);
         av1->colorRange = 0;
     } else {
-        av1->matrixCoefficients = IS_GBRP(ctx->data_pix_fmt) ? AVCOL_SPC_RGB : avctx->colorspace;
-        av1->colorPrimaries = avctx->color_primaries;
-        av1->transferCharacteristics = avctx->color_trc;
+        av1->matrixCoefficients = to_nv_color_matrix(IS_GBRP(ctx->data_pix_fmt) ? AVCOL_SPC_RGB : avctx->colorspace);
+        av1->colorPrimaries = to_nv_color_pri(avctx->color_primaries);
+        av1->transferCharacteristics = to_nv_color_trc(avctx->color_trc);
         av1->colorRange = (avctx->color_range == AVCOL_RANGE_JPEG
             || ctx->data_pix_fmt == AV_PIX_FMT_YUVJ420P || ctx->data_pix_fmt == AV_PIX_FMT_YUVJ422P || ctx->data_pix_fmt == AV_PIX_FMT_YUVJ444P);
     }
@@ -2517,7 +2528,12 @@ static void nvenc_fill_time_code(AVCodecContext *avctx, const AVFrame *frame, NV
             unsigned hh, mm, ss, ff, drop;
             ff_timecode_set_smpte(&drop, &hh, &mm, &ss, &ff, avctx->framerate, tc[i + 1], 0, 0);
 
+#ifdef NVENC_NEW_COUNTING_TYPE
+            time_code->clockTimestamp[i].countingTypeLSB = 0;
+            time_code->clockTimestamp[i].countingTypeMSB = 0;
+#else
             time_code->clockTimestamp[i].countingType = 0;
+#endif
             time_code->clockTimestamp[i].discontinuityFlag = 0;
             time_code->clockTimestamp[i].cntDroppedFrames = drop;
             time_code->clockTimestamp[i].nFrames = ff;
@@ -2789,7 +2805,7 @@ static int process_output_surface(AVCodecContext *avctx, AVPacket *pkt, NvencSur
         goto error;
     }
 
-    ff_side_data_set_encoder_stats(pkt,
+    ff_encode_add_stats_side_data(pkt,
         (lock_params.frameAvgQP - 1) * FF_QP2LAMBDA, NULL, 0, pict_type);
 
     res = nvenc_set_timestamp(avctx, &lock_params, pkt);
