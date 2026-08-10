@@ -28,50 +28,33 @@ extern "C" {
 /**************************************
      * Threads
      **************************************/
-extern EbHandle svt_create_thread(void *thread_function(void *), void *thread_context);
+EbHandle svt_create_thread(void* thread_function(void*), void* thread_context, const char* name);
 
-extern EbErrorType svt_start_thread(EbHandle thread_handle);
+EbErrorType svt_destroy_thread(EbHandle thread_handle);
 
-extern EbErrorType svt_stop_thread(EbHandle thread_handle);
-
-extern EbErrorType svt_destroy_thread(EbHandle thread_handle);
+// Format a per-instance worker thread name as `<prefix><index>` into a fixed
+// buffer (typical size 16 to match TASK_COMM_LEN). Used by EB_CREATE_THREAD_ARRAY.
+void svt_format_thread_name(char* buf, size_t size, const char* prefix, uint32_t index);
 
 /**************************************
      * Semaphores
      **************************************/
-extern EbHandle svt_create_semaphore(uint32_t initial_count, uint32_t max_count);
+EbHandle svt_create_semaphore(uint32_t initial_count, uint32_t max_count);
 
-extern EbErrorType svt_post_semaphore(EbHandle semaphore_handle);
+EbErrorType svt_post_semaphore(EbHandle semaphore_handle);
 
-extern EbErrorType svt_block_on_semaphore(EbHandle semaphore_handle);
+EbErrorType svt_block_on_semaphore(EbHandle semaphore_handle);
 
-extern EbErrorType svt_destroy_semaphore(EbHandle semaphore_handle);
+EbErrorType svt_destroy_semaphore(EbHandle semaphore_handle);
 
 /**************************************
      * Mutex
      **************************************/
-extern EbHandle    svt_create_mutex(void);
-extern EbErrorType svt_release_mutex(EbHandle mutex_handle);
-extern EbErrorType svt_block_on_mutex(EbHandle mutex_handle);
-extern EbErrorType svt_destroy_mutex(EbHandle mutex_handle);
-#ifdef _WIN32
-
-#define EB_CREATE_THREAD(pointer, thread_function, thread_context)               \
-    do {                                                                         \
-        pointer = svt_create_thread(thread_function, thread_context);            \
-        EB_ADD_MEM(pointer, 1, EB_THREAD);                                       \
-        if (svt_aom_group_affinity_enabled) {                                    \
-            if (num_groups == 1)                                                 \
-                SetThreadAffinityMask(pointer, svt_aom_group_affinity.Mask);     \
-            else if (num_groups == 2 && alternate_groups) {                      \
-                svt_aom_group_affinity.Group = 1 - svt_aom_group_affinity.Group; \
-                SetThreadGroupAffinity(pointer, &svt_aom_group_affinity, NULL);  \
-            } else if (num_groups == 2 && !alternate_groups)                     \
-                SetThreadGroupAffinity(pointer, &svt_aom_group_affinity, NULL);  \
-        }                                                                        \
-    } while (0)
-
-#else
+EbHandle    svt_create_mutex(void);
+EbErrorType svt_release_mutex(EbHandle mutex_handle);
+EbErrorType svt_block_on_mutex(EbHandle mutex_handle);
+EbErrorType svt_destroy_mutex(EbHandle mutex_handle);
+#ifndef _WIN32
 #ifndef __USE_GNU
 #define __USE_GNU
 #endif
@@ -80,21 +63,18 @@ extern EbErrorType svt_destroy_mutex(EbHandle mutex_handle);
 #endif
 #include <sched.h>
 #include <pthread.h>
-#if defined(__linux__) && !defined(__ANDROID__)
-#define EB_CREATE_THREAD(pointer, thread_function, thread_context)                                   \
-    do {                                                                                             \
-        pointer = svt_create_thread(thread_function, thread_context);                                \
-        EB_ADD_MEM(pointer, 1, EB_THREAD);                                                           \
-        pthread_setaffinity_np(*((pthread_t *)pointer), sizeof(cpu_set_t), &svt_aom_group_affinity); \
-    } while (0)
-#else
-#define EB_CREATE_THREAD(pointer, thread_function, thread_context)    \
-    do {                                                              \
-        pointer = svt_create_thread(thread_function, thread_context); \
-        EB_ADD_MEM(pointer, 1, EB_THREAD);                            \
-    } while (0)
 #endif
-#endif
+#define EB_CREATE_THREAD_NAMED(pointer, thread_function, thread_context, name) \
+    do {                                                                       \
+        pointer = svt_create_thread(thread_function, thread_context, name);    \
+        EB_ADD_MEM(pointer, 1, EB_THREAD);                                     \
+    } while (0)
+
+/* `thread_function` must be a bare identifier here; the macro derives the
+ * thread name via # stringification, so any cast or member access (e.g.
+ * `(kernel_t)fn`, `ctx->fn`) would leak into the thread name. */
+#define EB_CREATE_THREAD(pointer, thread_function, thread_context) \
+    EB_CREATE_THREAD_NAMED(pointer, thread_function, thread_context, #thread_function)
 #define EB_DESTROY_THREAD(pointer)                   \
     do {                                             \
         if (pointer) {                               \
@@ -104,21 +84,26 @@ extern EbErrorType svt_destroy_mutex(EbHandle mutex_handle);
         }                                            \
     } while (0);
 
-#define EB_CREATE_THREAD_ARRAY(pa, count, thread_function, thread_contexts)                                \
-    do {                                                                                                   \
-        EB_ALLOC_PTR_ARRAY(pa, count);                                                                     \
-        for (uint32_t i = 0; i < count; i++) EB_CREATE_THREAD(pa[i], thread_function, thread_contexts[i]); \
+#define EB_CREATE_THREAD_ARRAY(pa, count, thread_function, thread_contexts, name_prefix)       \
+    do {                                                                                       \
+        EB_ALLOC_PTR_ARRAY(pa, count);                                                         \
+        for (uint32_t i = 0; i < count; i++) {                                                 \
+            char _svt_thr_name[16];                                                            \
+            svt_format_thread_name(_svt_thr_name, sizeof(_svt_thr_name), name_prefix, i);      \
+            EB_CREATE_THREAD_NAMED(pa[i], thread_function, thread_contexts[i], _svt_thr_name); \
+        }                                                                                      \
     } while (0)
 
-#define EB_DESTROY_THREAD_ARRAY(pa, count)                                 \
-    do {                                                                   \
-        if (pa) {                                                          \
-            for (uint32_t i = 0; i < count; i++) EB_DESTROY_THREAD(pa[i]); \
-            EB_FREE_PTR_ARRAY(pa, count);                                  \
-        }                                                                  \
+#define EB_DESTROY_THREAD_ARRAY(pa, count)       \
+    do {                                         \
+        if (pa) {                                \
+            for (uint32_t i = 0; i < count; i++) \
+                EB_DESTROY_THREAD(pa[i]);        \
+            EB_FREE_PTR_ARRAY(pa, count);        \
+        }                                        \
     } while (0)
 
-void svt_aom_atomic_set_u32(AtomicVarU32 *var, uint32_t in);
+void svt_aom_atomic_set_u32(AtomicVarU32* var, uint32_t in);
 
 /*
  Condition variable
@@ -134,9 +119,53 @@ typedef struct CondVar {
 #endif
 } CondVar;
 
-EbErrorType svt_set_cond_var(CondVar *cond_var, int32_t newval);
-EbErrorType svt_wait_cond_var(CondVar *cond_var, int32_t input);
-EbErrorType svt_create_cond_var(CondVar *cond_var);
+EbErrorType svt_set_cond_var(CondVar* cond_var, int32_t newval);
+EbErrorType svt_wait_cond_var(CondVar* cond_var, int32_t input);
+EbErrorType svt_create_cond_var(CondVar* cond_var);
+
+// once related functions and macros
+#ifdef _WIN32
+typedef INIT_ONCE OnceType;
+#define ONCE_INIT INIT_ONCE_STATIC_INIT
+#define ONCE_ROUTINE(name) BOOL CALLBACK name(PINIT_ONCE InitOnce, PVOID Parameter, PVOID* lpContext)
+#define ONCE_ROUTINE_EPILOG \
+    do {                    \
+        return TRUE;        \
+    } while (0)
+typedef PINIT_ONCE_FN OnceFn;
+#else
+typedef pthread_once_t OnceType;
+#define ONCE_INIT PTHREAD_ONCE_INIT
+#define ONCE_ROUTINE(name) void name(void)
+#define ONCE_ROUTINE_EPILOG \
+    do {                    \
+        return;             \
+    } while (0)
+typedef void (*OnceFn)(void);
+#endif
+#define DEFINE_ONCE(once_control) static OnceType once_control = ONCE_INIT
+
+// Macro to define a lazily-initialized mutex with once control
+// Usage: DEFINE_ONCE_MUTEX(my_mutex)
+// Then call: RUN_ONCE_MUTEX(my_mutex) before using svt_block_on_mutex(my_mutex)
+#define DEFINE_ONCE_MUTEX(mutex_name)           \
+    static EbHandle mutex_name = NULL;          \
+    static void     deinit_##mutex_name(void) { \
+        if (mutex_name) {                   \
+            svt_destroy_mutex(mutex_name);  \
+            mutex_name = NULL;              \
+        }                                   \
+    }                                           \
+    ONCE_ROUTINE(init_##mutex_name) {           \
+        mutex_name = svt_create_mutex();        \
+        atexit(deinit_##mutex_name);            \
+        ONCE_ROUTINE_EPILOG;                    \
+    }                                           \
+    DEFINE_ONCE(mutex_name##_once)
+
+#define RUN_ONCE_MUTEX(mutex_name) svt_run_once(&mutex_name##_once, init_##mutex_name)
+
+void svt_run_once(OnceType* once_control, OnceFn init_routine);
 
 #ifdef __cplusplus
 }

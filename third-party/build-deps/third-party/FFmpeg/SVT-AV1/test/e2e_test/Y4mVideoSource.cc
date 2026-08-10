@@ -54,8 +54,7 @@ EbErrorType Y4MVideoSource::parse_file_info() {
     // Seek to begin
     fseek(file_handle_, 0, SEEK_SET);
 
-    EbConfig cfg;
-    memset(&cfg, 0, sizeof(cfg));
+    EbConfig cfg{};
     cfg.input_file = file_handle_;
     if (check_if_y4m(&cfg) != true)
         return EB_ErrorBadParameter;
@@ -70,7 +69,7 @@ EbErrorType Y4MVideoSource::parse_file_info() {
 
     cal_yuv_plane_param();
 
-    // Get header lenght
+    // Get header length
     header_length_ = ftell(file_handle_);
 
     uint32_t luma_size = width_ * height_ * bytes_per_sample_;

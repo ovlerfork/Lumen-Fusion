@@ -40,20 +40,17 @@ set(all_files
 add_executable(SvtAv1EncApp
     ${all_files})
 
+# Expose pthread_setname_np on glibc for the app's main-thread naming.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_definitions(SvtAv1EncApp PRIVATE _GNU_SOURCE)
+endif()
+
 if(TARGET safestringlib)
     target_sources(SvtAv1EncApp PRIVATE $<TARGET_OBJECTS:safestringlib>)
 endif()
 
 #********** SET COMPILE FLAGS************
 # Link the Encoder App
-target_link_libraries(SvtAv1EncApp
-        SvtAv1Enc)
-if(${CMAKE_SYSTEM_NAME} STREQUAL "Android")
-    target_link_libraries(SvtAv1EncApp ${PLATFORM_LIBS})
-elseif(UNIX)
-    target_link_libraries(SvtAv1EncApp
-        pthread
-        m)
-endif()
+target_link_libraries(SvtAv1EncApp PRIVATE SvtAv1Enc)
 
-install(TARGETS SvtAv1EncApp RUNTIME DESTINATION ${CMAKE_INSTALL_FULL_BINDIR})
+install(TARGETS SvtAv1EncApp RUNTIME COMPONENT Runtime DESTINATION ${CMAKE_INSTALL_BINDIR})

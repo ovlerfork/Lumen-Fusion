@@ -9,6 +9,8 @@
 #endif
 
 // standard includes
+#include <charconv>
+#include <chrono>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
@@ -16,10 +18,13 @@
 #include <fcntl.h>
 #include <ifaddrs.h>
 #include <mutex>
+#include <string_view>
+#include <thread>
 #include <vector>
 
 // platform includes
 #include <arpa/inet.h>
+#include <ApplicationServices/ApplicationServices.h>
 #include <dlfcn.h>
 #include <Foundation/Foundation.h>
 #include <IOKit/pwr_mgt/IOPMLib.h>
@@ -36,6 +41,7 @@
 // local includes
 #include "misc.h"
 #include "virtual_display.h"
+#include "src/config.h"
 #include "src/entry_handler.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
@@ -74,7 +80,50 @@ namespace platf {
       assertion = kIOPMNullAssertionID;
     }
 
-    void declare_remote_user_activity() {
+    bool has_required_active_display(const std::string_view display_name) {
+      CGDirectDisplayID displays[32];
+      uint32_t display_count = 0;
+      if (CGGetActiveDisplayList(std::size(displays), displays, &display_count) != kCGErrorSuccess) {
+        return false;
+      }
+
+      CGDirectDisplayID selected_display_id {};
+      bool has_selected_display = false;
+      if (!display_name.empty()) {
+        const auto *begin = display_name.data();
+        const auto *end = begin + display_name.size();
+        const auto [ptr, ec] = std::from_chars(begin, end, selected_display_id);
+        has_selected_display = ec == std::errc {} && ptr == end;
+      }
+
+      for (uint32_t i = 0; i < display_count; ++i) {
+        if (has_selected_display && displays[i] != selected_display_id) {
+          continue;
+        }
+        if (CGDisplayIsActive(displays[i]) && !CGDisplayIsAsleep(displays[i])) {
+          return true;
+        }
+      }
+
+      return false;
+    }
+
+    void wait_for_display_after_wake(const std::string_view display_name) {
+      for (int attempt = 0; attempt < 10 && !has_required_active_display(display_name); ++attempt) {
+        std::this_thread::sleep_for(100ms);
+      }
+
+      if (!has_required_active_display(display_name)) {
+        BOOST_LOG(warning) << "Display wake attempt did not expose the requested display ["sv
+                           << display_name << "] in the active display list"sv;
+      }
+    }
+
+    bool declare_remote_user_activity() {
+      // Replace the previous short-lived activity assertion so each assertion
+      // created by Lumina has a single owner and is released deterministically.
+      release_power_assertion(streaming_user_activity_assertion, "remote-user activity"sv);
+
       const IOReturn status = IOPMAssertionDeclareUserActivity(
         CFSTR("Lumina remote streaming connection"),
         kIOPMUserActiveRemote,
@@ -83,8 +132,10 @@ namespace platf {
       if (status != kIOReturnSuccess) {
         streaming_user_activity_assertion = kIOPMNullAssertionID;
         BOOST_LOG(warning) << "Failed to wake the display for remote streaming: IOReturn "sv << status;
+        return false;
       } else {
         BOOST_LOG(info) << "Declared remote user activity to wake the macOS display"sv;
+        return true;
       }
     }
   }  // namespace
@@ -284,7 +335,12 @@ namespace platf {
 
   void streaming_will_prepare() {
     std::lock_guard lock {streaming_power_assertion_mutex};
-    declare_remote_user_activity();
+    if (declare_remote_user_activity()) {
+      wait_for_display_after_wake(config::video.output_name);
+      // This assertion only wakes the display for detection/probing. The active
+      // session creates its own user-activity and display-sleep assertions.
+      release_power_assertion(streaming_user_activity_assertion, "display-detection activity"sv);
+    }
   }
 
   void streaming_will_start() {

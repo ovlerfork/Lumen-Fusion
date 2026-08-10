@@ -1,5 +1,5 @@
 /**
- * @file src/rswrapper.c
+ * @file src/
  * @brief Wrappers for nanors vectorization with different ISA options
  */
 

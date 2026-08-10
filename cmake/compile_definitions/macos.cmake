@@ -76,13 +76,6 @@ set_source_files_properties(
         "${CMAKE_SOURCE_DIR}/src/platform/macos/virtual_display.m"
         PROPERTIES COMPILE_FLAGS "-fobjc-arc")
 
-if(SUNSHINE_ENABLE_TRAY)
-    list(APPEND SUNSHINE_EXTERNAL_LIBRARIES
-            ${COCOA})
-    list(APPEND PLATFORM_TARGET_FILES
-            "${CMAKE_SOURCE_DIR}/third-party/tray/src/tray_darwin.m")
-endif()
-
 # Build vd_helper: standalone subprocess for creating CGVirtualDisplay
 add_executable(vd_helper "${CMAKE_SOURCE_DIR}/src/platform/macos/vd_helper.m")
 set_source_files_properties(

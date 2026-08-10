@@ -18,31 +18,8 @@ if(NOT DEFINED FFMPEG_PREPARED_BINARIES)
     # Determine download location
     set(FFMPEG_DOWNLOAD_DIR "${CMAKE_BINARY_DIR}/_deps")
 
-    # Get the current commit/tag from the build-deps submodule
-    execute_process(
-        COMMAND git -C "${CMAKE_SOURCE_DIR}/third-party/build-deps" describe --tags --exact-match
-        OUTPUT_VARIABLE FFMPEG_RELEASE_TAG
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        ERROR_QUIET
-    )
-
-    # If no exact tag match, try to get the commit hash and look for a tag
-    if(NOT FFMPEG_RELEASE_TAG)
-        execute_process(
-            COMMAND git -C "${CMAKE_SOURCE_DIR}/third-party/build-deps" rev-parse HEAD
-            OUTPUT_VARIABLE BUILD_DEPS_COMMIT
-            OUTPUT_STRIP_TRAILING_WHITESPACE
-            ERROR_QUIET
-        )
-
-        # Try to find a tag that points to this commit
-        execute_process(
-            COMMAND git -C "${CMAKE_SOURCE_DIR}/third-party/build-deps" tag --points-at ${BUILD_DEPS_COMMIT}
-            OUTPUT_VARIABLE FFMPEG_RELEASE_TAG
-            OUTPUT_STRIP_TRAILING_WHITESPACE
-            ERROR_QUIET
-        )
-    endif()
+    # Explicitly tracked Lumina FFmpeg release value
+    set(FFMPEG_RELEASE_TAG "v2026.724.203728" CACHE STRING "Pinned FFmpeg release tag for build-deps")
 
     # Set GitHub release URL
     set(FFMPEG_GITHUB_REPO "LizardByte/build-deps")

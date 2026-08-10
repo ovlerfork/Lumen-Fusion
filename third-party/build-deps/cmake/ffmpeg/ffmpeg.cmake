@@ -31,9 +31,11 @@ list(APPEND FFMPEG_EXTRA_CONFIGURE
         --extra-cflags='-I${CMAKE_CURRENT_BINARY_DIR_UNIX}/usr/local/include'
         --extra-cflags='-I${CMAKE_CURRENT_BINARY_DIR_UNIX}/x264/include'
         --extra-cflags='-I${CMAKE_CURRENT_BINARY_DIR_UNIX}/libva/include'
+        --extra-cflags='-I${CMAKE_CURRENT_BINARY_DIR_UNIX}/vulkan/include'
         --extra-ldflags='-L${CMAKE_CURRENT_BINARY_DIR_UNIX}/usr/local/lib'
         --extra-ldflags='-L${CMAKE_CURRENT_BINARY_DIR_UNIX}/x264/lib'
         --extra-ldflags='-L${CMAKE_CURRENT_BINARY_DIR_UNIX}/libva/lib'
+        --extra-ldflags='-L${CMAKE_CURRENT_BINARY_DIR_UNIX}/vulkan/lib'
         --extra-libs='-lpthread -lm'
         --disable-all
         --disable-autodetect
@@ -44,6 +46,7 @@ list(APPEND FFMPEG_EXTRA_CONFIGURE
         --enable-avutil
         --enable-bsfs  # ensure config.h will have CONFIG_CBS_ flags
         --enable-swscale
+        --enable-encoder=mpeg2video,h263p
 )
 
 if(BUILD_FFMPEG_AMF)
@@ -65,7 +68,7 @@ if(BUILD_FFMPEG_NV_CODEC_HEADERS)
             --enable-ffnvcodec
             --enable-nvenc
     )
-    if(UNIX AND NOT APPLE AND NOT FREEBSD)
+    if(UNIX AND NOT APPLE AND NOT FREEBSD AND BUILD_FFMPEG_CUDA_LLVM)
         list(APPEND FFMPEG_EXTRA_CONFIGURE
                 --enable-cuda_llvm
         )
@@ -80,7 +83,13 @@ endif()
 if(BUILD_FFMPEG_LIBVA)
     list(APPEND FFMPEG_EXTRA_CONFIGURE
             --enable-vaapi
-            --enable-encoder=h264_vaapi,hevc_vaapi,av1_vaapi
+            --enable-encoder=h264_vaapi,hevc_vaapi,av1_vaapi,mpeg2_vaapi
+    )
+endif()
+if(BUILD_FFMPEG_VULKAN)
+    list(APPEND FFMPEG_EXTRA_CONFIGURE
+            --enable-vulkan
+            --enable-encoder=h264_vulkan,hevc_vulkan,av1_vulkan
     )
 endif()
 if(BUILD_FFMPEG_X264)
@@ -100,7 +109,7 @@ endif()
 if(WIN32)
     list(APPEND FFMPEG_EXTRA_CONFIGURE
             --enable-d3d11va
-            --enable-encoder=h264_qsv,hevc_qsv,av1_qsv
+            --enable-encoder=h264_qsv,hevc_qsv,av1_qsv,mpeg2_qsv
             --enable-libvpl
     )
 elseif(APPLE)
@@ -166,6 +175,9 @@ if(BUILD_FFMPEG_SVT_AV1)
 endif()
 if(BUILD_FFMPEG_LIBVA)
     add_dependencies(ffmpeg libva)
+endif()
+if(BUILD_FFMPEG_VULKAN)
+    add_dependencies(ffmpeg vulkan-loader)
 endif()
 if(BUILD_FFMPEG_X264)
     add_dependencies(ffmpeg x264)

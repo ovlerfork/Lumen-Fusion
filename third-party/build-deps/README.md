@@ -4,7 +4,6 @@
 
 This is a common set of pre-compiled dependencies for [LizardByte/Sunshine](https://github.com/LizardByte/Sunshine).
 
-- [Boost](https://www.boost.org)
 - [FFmpeg](https://ffmpeg.org)
 
 ## Usage
@@ -84,9 +83,11 @@ pkg install -y \
 
 #### Linux
 
+##### Debian/Ubuntu
+
 ```bash
 sudo apt install -y \
-autoconf \
+    autoconf \
     automake \
     build-essential \
     cmake \
@@ -111,6 +112,31 @@ autoconf \
     texinfo \
     wget \
     zlib1g-dev
+```
+
+#### Alpine
+
+```bash
+apk add --no-cache \
+    autoconf \
+    automake \
+    bash \
+    build-base \
+    cmake \
+    git \
+    libdrm-dev \
+    libtool \
+    libx11-dev \
+    libxcb-dev \
+    libxext-dev \
+    libxfixes-dev \
+    libxrandr-dev \
+    linux-headers \
+    mesa-dev \
+    nasm \
+    numactl-dev \
+    pkgconf \
+    wayland-dev
 ```
 
 #### macOS

@@ -186,9 +186,12 @@ static int FUNC(decoder_model_info)(CodedBitstreamContext *ctx, RWContext *rw,
 static int FUNC(sequence_header_obu)(CodedBitstreamContext *ctx, RWContext *rw,
                                      AV1RawSequenceHeader *current)
 {
+    CodedBitstreamAV1Context *priv = ctx->priv_data;
     int i, err;
 
     HEADER("Sequence Header");
+
+    priv->seen_frame_header = 0;
 
     fc(3, seq_profile, AV_PROFILE_AV1_MAIN,
                        AV_PROFILE_AV1_PROFESSIONAL);
@@ -1758,7 +1761,15 @@ static int FUNC(frame_header_obu)(CodedBitstreamContext *ctx, RWContext *rw,
         }
     } else {
         if (redundant)
+#ifdef READ
             HEADER("Redundant Frame Header (used as Frame Header)");
+#else
+        {
+            av_log(ctx->log_ctx, AV_LOG_ERROR, "Invalid redundant "
+                   "frame header OBU.\n");
+            return AVERROR_INVALIDDATA;
+        }
+#endif
         else
             HEADER("Frame Header");
 

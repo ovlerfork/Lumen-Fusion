@@ -131,7 +131,10 @@ static const vector<uint32_t> default_hierarchical_levels = {
 };
 static const vector<uint32_t> valid_hierarchical_levels = {3, 4, 5};
 static const vector<uint32_t> invalid_hierarchical_levels = {
-    0, 1, 2, 6,  // ...
+    0,
+    1,
+    2,
+    6,  // ...
 };
 
 /* Prediction structure used to construct GOP. There are two main structures
@@ -146,19 +149,19 @@ static const vector<uint32_t> invalid_hierarchical_levels = {
  * reference picture list 0 and the reference picture list 1 will contain the
  * same reference picture.
  *
- * Following values are supported and defined in definitions.h
- * #define LOW_DELAY       1
- * #define RANDOM_ACCESS   2
+ * Following values are supported and defined in EbSvtAv1Enc.h
+ * ALL_INTRA       0
+ * LOW_DELAY       1
+ * RANDOM_ACCESS   2
 
  * In Random Access structure, the b/b pictures can refer to reference pictures
  * from both directions (past and future).
  *
  * Default is 2. */
-static const vector<uint8_t> default_pred_structure = {
-    RANDOM_ACCESS,
-};
-static const vector<uint8_t> valid_pred_structure = {LOW_DELAY, RANDOM_ACCESS};
-static const vector<uint8_t> invalid_pred_structure = {
+static const vector<PredStructure> default_pred_structure = {RANDOM_ACCESS};
+static const vector<PredStructure> valid_pred_structure = {
+    ALL_INTRA, LOW_DELAY, RANDOM_ACCESS};
+static const vector<PredStructure> invalid_pred_structure = {
     /* _pred_structure override in code
     SVT_AV1_PRED_TOTAL_COUNT, SVT_AV1_PRED_TOTAL_COUNT + 1, EB_PRED_INVALID*/};
 
@@ -170,10 +173,26 @@ static const vector<uint32_t> default_source_width = {
     0,
 };
 static const vector<uint32_t> valid_source_width = {
-    64, 320, 640, 800, 1280, 1920, 2560, 3840, 4096,  // ...
+    1,
+    2,
+    3,
+    4,
+    8,
+    16,
+    32,
+    64,
+    320,
+    640,
+    800,
+    1280,
+    1920,
+    2560,
+    3840,
+    4096,  // ...
 };
 static const vector<uint32_t> invalid_source_width = {
-    0, 1, 2, 4, 8, 16, 32, 63, 65, 4097,  // ...
+    0,
+    16385,  // > 16384
 };
 
 /* The height of input source in units of picture luma pixels.
@@ -183,10 +202,25 @@ static const vector<uint32_t> default_source_height = {
     0,
 };
 static const vector<uint32_t> valid_source_height = {
-    64, 240, 480, 720, 1080, 1440, 1600, 2160,  // ...
+    1,
+    2,
+    3,
+    4,
+    8,
+    16,
+    32,
+    64,
+    240,
+    480,
+    720,
+    1080,
+    1440,
+    1600,
+    2160,  // ...
 };
 static const vector<uint32_t> invalid_source_height = {
-    0, 1, 2, 4, 8, 16, 32, 63, 65, 2161,  // ...
+    0,
+    8705,  // > 8704
 };
 
 // TODO: follwoing two parameters should be a combination test
@@ -260,7 +294,10 @@ static const vector<uint32_t> valid_encoder_bit_depth = {
     10,  // 10 bit.
 };
 static const vector<uint32_t> invalid_encoder_bit_depth = {
-    0, 1, 2, 11,  // ...
+    0,
+    1,
+    2,
+    11,  // ...
 };
 
 /* Offline packing of the 2bits: requires two bits packed input.
@@ -274,7 +311,8 @@ static const vector<uint32_t> valid_compressed_ten_bit_format = {
     // 1, Not supported in this version
 };
 static const vector<uint32_t> invalid_compressed_ten_bit_format = {
-    2, 10,  // ...
+    2,
+    10,  // ...
 };
 
 /* Number of frames of sequence to be encoded. If number of frames is greater
@@ -288,7 +326,12 @@ static const vector<uint64_t> default_frames_to_be_encoded = {
     0,
 };
 static const vector<uint64_t> valid_frames_to_be_encoded = {
-    0, 1, 10, 100, 10000, (uint64_t)0xFFFFFFFFFFFFFFFF,  // ...
+    0,
+    1,
+    10,
+    100,
+    10000,
+    (uint64_t)0xFFFFFFFFFFFFFFFF,  // ...
 };
 static const vector<uint64_t> invalid_frames_to_be_encoded = {
     // none
@@ -376,16 +419,15 @@ static const vector<bool> invalid_use_qp_file = {
 /* Flag to enable the Deblocking Loop Filtering.
  *
  * Default is true. */
-static const vector<bool> default_enable_dlf_flag = {
-    true,
+static const vector<uint8_t> default_enable_dlf_flag = {
+    1,
 };
-static const vector<bool> valid_enable_dlf_flag = {
-    false,
-    true,
+static const vector<uint8_t> valid_enable_dlf_flag = {
+    0,
+    1,
+    2,
 };
-static const vector<bool> invalid_enable_dlf_flag = {
-    // none
-};
+static const vector<uint8_t> invalid_enable_dlf_flag = {3};
 
 /* Film grain denoising the input picture
  * Flag to enable the denoising
@@ -482,10 +524,22 @@ static const vector<uint32_t> default_search_area_width = {
     16,  // 0,
 };
 static const vector<uint32_t> valid_search_area_width = {
-    1, 2, 3, 4, 8, 10, 16, 32, 64, 128, 256,  // ...
+    1,
+    2,
+    3,
+    4,
+    8,
+    10,
+    16,
+    32,
+    64,
+    128,
+    256,  // ...
 };
 static const vector<uint32_t> invalid_search_area_width = {
-    0, 257, 1000,  // ...
+    0,
+    257,
+    1000,  // ...
 };
 
 /* Number of search positions in the vertical direction.
@@ -495,10 +549,22 @@ static const vector<uint32_t> default_search_area_height = {
     7,  // 0,
 };
 static const vector<uint32_t> valid_search_area_height = {
-    1, 2, 3, 4, 8, 10, 16, 32, 64, 128, 256,  // ...
+    1,
+    2,
+    3,
+    4,
+    8,
+    10,
+    16,
+    32,
+    64,
+    128,
+    256,  // ...
 };
 static const vector<uint32_t> invalid_search_area_height = {
-    0, 257, 1000,  // ...
+    0,
+    257,
+    1000,  // ...
 };
 
 // MD Parameters
@@ -736,50 +802,6 @@ static const vector<EbCpuFlags> valid_use_cpu_flags = {
 };
 static const vector<EbCpuFlags> invalid_use_cpu_flags = {EB_CPU_FLAGS_INVALID};
 
-// Application Specific parameters
-/**
- * @brief API signal for the library to know the channel ID (used for pinning to
- * cores)
- *
- */
-static const vector<uint32_t> default_channel_id = {
-    0,
-};
-static const vector<uint32_t> valid_channel_id = {
-    0,
-    1,
-    2,
-    3,
-    10,
-    100,
-    0xFFFFFFFF,
-};
-static const vector<uint32_t> invalid_channel_id = {
-    // none
-};
-
-/**
- * @brief API signal for the library to know the active number of channels being
- * encoded simultaneously
- *
- */
-static const vector<uint32_t> default_active_channel_count = {
-    1,
-};
-static const vector<uint32_t> valid_active_channel_count = {
-    1,
-    2,
-    3,
-    10,
-    100,
-    0xFFFFFFFF,
-};
-static const vector<uint32_t> invalid_active_channel_count = {
-    /* active_channel_count override in code
-    0,
-    */
-};
-
 /* Flag to enable the Speed Control functionality to achieve the real-time
  * encoding speed defined by dynamically changing the encoding preset to meet
  * the average speed defined in injectorFrameRate. When this parameter is set
@@ -823,26 +845,6 @@ static const vector<uint32_t> valid_level_of_parallelism = {
 };
 static const vector<uint32_t> invalid_level_of_parallelism = {
     // ...
-};
-
-/* Target socket to run on. For dual socket systems, this can specify which
- * socket the encoder runs on.
- *
- * -1 = Both Sockets.
- *  0 = Socket 0.
- *  1 = Socket 1.
- *
- * Default is -1. */
-static const vector<int32_t> default_target_socket = {
-    -1,
-};
-static const vector<int32_t> valid_target_socket = {
-    -1,
-    0,
-    1,
-};
-static const vector<int32_t> invalid_target_socket = {
-    2,
 };
 
 // Debug tools
@@ -897,8 +899,8 @@ static const vector<int32_t> invalid_tile_rows = {
  *
  * Default is 2. */
 static const vector<uint32_t> default_screen_content_mode = {2};
-static const vector<uint32_t> valid_screen_content_mode = {0, 1, 2};
-static const vector<uint32_t> invalid_screen_content_mode = {3};
+static const vector<uint32_t> valid_screen_content_mode = {0, 1, 2, 3};
+static const vector<uint32_t> invalid_screen_content_mode = {4};
 
 /* Variables to control the use of ALT-REF (temporally filtered frames)
  */

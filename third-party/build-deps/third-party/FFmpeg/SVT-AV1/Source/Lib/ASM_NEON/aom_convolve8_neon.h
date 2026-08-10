@@ -20,7 +20,7 @@
 #include "mem_neon.h"
 #include "transpose_neon.h"
 
-static inline int get_filter_taps_convolve8(const int16_t *filter) {
+static inline int get_filter_taps_convolve8(const int16_t* filter) {
     if (filter[0] | filter[7]) {
         return 8;
     }
@@ -33,45 +33,39 @@ static inline int get_filter_taps_convolve8(const int16_t *filter) {
     return 2;
 }
 
-static inline int16x4_t convolve8_4(const int16x4_t s0, const int16x4_t s1, const int16x4_t s2, const int16x4_t s3,
-                                    const int16x4_t s4, const int16x4_t s5, const int16x4_t s6, const int16x4_t s7,
-                                    const int16x8_t filter) {
+static inline int16x4_t convolve6_4(const int16x4_t s0, const int16x4_t s1, const int16x4_t s2, const int16x4_t s3,
+                                    const int16x4_t s4, const int16x4_t s5, const int16x8_t filter) {
     const int16x4_t filter_lo = vget_low_s16(filter);
     const int16x4_t filter_hi = vget_high_s16(filter);
 
-    int16x4_t sum = vmul_lane_s16(s0, filter_lo, 0);
-    sum           = vmla_lane_s16(sum, s1, filter_lo, 1);
-    sum           = vmla_lane_s16(sum, s2, filter_lo, 2);
-    sum           = vmla_lane_s16(sum, s3, filter_lo, 3);
-    sum           = vmla_lane_s16(sum, s4, filter_hi, 0);
-    sum           = vmla_lane_s16(sum, s5, filter_hi, 1);
-    sum           = vmla_lane_s16(sum, s6, filter_hi, 2);
-    sum           = vmla_lane_s16(sum, s7, filter_hi, 3);
+    int16x4_t sum = vmul_lane_s16(s0, filter_lo, 1);
+    sum           = vmla_lane_s16(sum, s1, filter_lo, 2);
+    sum           = vmla_lane_s16(sum, s2, filter_lo, 3);
+    sum           = vmla_lane_s16(sum, s3, filter_hi, 0);
+    sum           = vmla_lane_s16(sum, s4, filter_hi, 1);
+    sum           = vmla_lane_s16(sum, s5, filter_hi, 2);
 
     return sum;
 }
 
-static inline uint8x8_t convolve8_8(const int16x8_t s0, const int16x8_t s1, const int16x8_t s2, const int16x8_t s3,
-                                    const int16x8_t s4, const int16x8_t s5, const int16x8_t s6, const int16x8_t s7,
-                                    const int16x8_t filter) {
+static inline uint8x8_t convolve6_8(const int16x8_t s0, const int16x8_t s1, const int16x8_t s2, const int16x8_t s3,
+                                    const int16x8_t s4, const int16x8_t s5, const int16x8_t filter) {
     const int16x4_t filter_lo = vget_low_s16(filter);
     const int16x4_t filter_hi = vget_high_s16(filter);
 
-    int16x8_t sum = vmulq_lane_s16(s0, filter_lo, 0);
-    sum           = vmlaq_lane_s16(sum, s1, filter_lo, 1);
-    sum           = vmlaq_lane_s16(sum, s2, filter_lo, 2);
-    sum           = vmlaq_lane_s16(sum, s3, filter_lo, 3);
-    sum           = vmlaq_lane_s16(sum, s4, filter_hi, 0);
-    sum           = vmlaq_lane_s16(sum, s5, filter_hi, 1);
-    sum           = vmlaq_lane_s16(sum, s6, filter_hi, 2);
-    sum           = vmlaq_lane_s16(sum, s7, filter_hi, 3);
+    int16x8_t sum = vmulq_lane_s16(s0, filter_lo, 1);
+    sum           = vmlaq_lane_s16(sum, s1, filter_lo, 2);
+    sum           = vmlaq_lane_s16(sum, s2, filter_lo, 3);
+    sum           = vmlaq_lane_s16(sum, s3, filter_hi, 0);
+    sum           = vmlaq_lane_s16(sum, s4, filter_hi, 1);
+    sum           = vmlaq_lane_s16(sum, s5, filter_hi, 2);
 
     // We halved the filter values so -1 from right shift.
     return vqrshrun_n_s16(sum, FILTER_BITS - 1);
 }
 
-static inline void convolve8_horiz_2tap_neon(const uint8_t *src, ptrdiff_t src_stride, uint8_t *dst,
-                                             ptrdiff_t dst_stride, const int16_t *filter_x, int w, int h) {
+static inline void convolve8_horiz_2tap_neon(const uint8_t* src, ptrdiff_t src_stride, uint8_t* dst,
+                                             ptrdiff_t dst_stride, const int16_t* filter_x, int w, int h) {
     // Bilinear filter values are all positive.
     const uint8x8_t f0 = vdup_n_u8((uint8_t)filter_x[3]);
     const uint8x8_t f1 = vdup_n_u8((uint8_t)filter_x[4]);
@@ -123,8 +117,8 @@ static inline void convolve8_horiz_2tap_neon(const uint8_t *src, ptrdiff_t src_s
     } else {
         do {
             int            width = w;
-            const uint8_t *s     = src;
-            uint8_t       *d     = dst;
+            const uint8_t* s     = src;
+            uint8_t*       d     = dst;
 
             do {
                 uint8x16_t s0 = vld1q_u8(s + 0);
@@ -161,8 +155,8 @@ static inline uint8x8_t convolve4_8(const int16x8_t s0, const int16x8_t s1, cons
     return vqrshrun_n_s16(sum, FILTER_BITS - 1);
 }
 
-static inline void convolve8_vert_4tap_neon(const uint8_t *src, ptrdiff_t src_stride, uint8_t *dst,
-                                            ptrdiff_t dst_stride, const int16_t *filter_y, int w, int h) {
+static inline void convolve8_vert_4tap_neon(const uint8_t* src, ptrdiff_t src_stride, uint8_t* dst,
+                                            ptrdiff_t dst_stride, const int16_t* filter_y, int w, int h) {
     // All filter values are even, halve to reduce intermediate precision
     // requirements.
     const int16x4_t filter = vshr_n_s16(vld1_s16(filter_y + 2), 1);
@@ -210,8 +204,8 @@ static inline void convolve8_vert_4tap_neon(const uint8_t *src, ptrdiff_t src_st
             int16x8_t s2 = vreinterpretq_s16_u16(vmovl_u8(t2));
 
             int            height = h;
-            const uint8_t *s      = src + 3 * src_stride;
-            uint8_t       *d      = dst;
+            const uint8_t* s      = src + 3 * src_stride;
+            uint8_t*       d      = dst;
 
             do {
                 uint8x8_t t3;
@@ -244,8 +238,8 @@ static inline void convolve8_vert_4tap_neon(const uint8_t *src, ptrdiff_t src_st
     }
 }
 
-static inline void convolve8_vert_2tap_neon(const uint8_t *src, ptrdiff_t src_stride, uint8_t *dst,
-                                            ptrdiff_t dst_stride, const int16_t *filter_y, int w, int h) {
+static inline void convolve8_vert_2tap_neon(const uint8_t* src, ptrdiff_t src_stride, uint8_t* dst,
+                                            ptrdiff_t dst_stride, const int16_t* filter_y, int w, int h) {
     // Bilinear filter values are all positive.
     uint8x8_t f0 = vdup_n_u8((uint8_t)filter_y[3]);
     uint8x8_t f1 = vdup_n_u8((uint8_t)filter_y[4]);
@@ -295,8 +289,8 @@ static inline void convolve8_vert_2tap_neon(const uint8_t *src, ptrdiff_t src_st
     } else {
         do {
             int            width = w;
-            const uint8_t *s     = src;
-            uint8_t       *d     = dst;
+            const uint8_t* s     = src;
+            uint8_t*       d     = dst;
 
             do {
                 uint8x16_t s0 = vld1q_u8(s + 0 * src_stride);

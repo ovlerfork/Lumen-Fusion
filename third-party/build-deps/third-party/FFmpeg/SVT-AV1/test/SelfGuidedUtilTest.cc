@@ -45,7 +45,8 @@ typedef int64_t (*PixelProjFunc)(const uint8_t *src8, int32_t width,
                                  const uint8_t *dat8, int32_t dat_stride,
                                  int32_t *flt0, int32_t flt0_stride,
                                  int32_t *flt1, int32_t flt1_stride,
-                                 int32_t xq[2], const SgrParamsType *params);
+                                 const int32_t xq[2],
+                                 const SgrParamsType *params);
 
 typedef std::tuple<const PixelProjFunc, const PixelProjFunc>
     PixelProjErrorTestParam;
@@ -362,6 +363,8 @@ INSTANTIATE_TEST_SUITE_P(
 #endif  // HAVE_SVE
 #endif  // ARCH_AARCH64
 
+#if CONFIG_ENABLE_HIGH_BIT_DEPTH
+
 class PixelProjErrorHbdTest : public PixelProjErrorTest<uint16_t> {
   protected:
     PixelProjErrorHbdTest() : rnd12_(12, false) {
@@ -425,6 +428,8 @@ INSTANTIATE_TEST_SUITE_P(
 #endif  // HAVE_SVE
 #endif  // ARCH_AARCH64
 
+#endif  // CONFIG_ENABLE_HIGH_BIT_DEPTH
+
 typedef void (*GetProjSubspaceFunc)(const uint8_t *src8, int32_t width,
                                     int32_t height, int32_t src_stride,
                                     const uint8_t *dat8, int32_t dat_stride,
@@ -437,6 +442,7 @@ template <typename Sample>
 class GetProjSubspaceTest
     : public ::testing::TestWithParam<GetProjSubspaceFunc> {
   public:
+    GetProjSubspaceTest() = default;
     void SetUp() override {
         test_impl_ = GetParam();
         input_ = (Sample *)svt_aom_memalign(

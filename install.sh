@@ -24,7 +24,7 @@ ok()    { echo -e "${GREEN}[OK]${NC} $1"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
-PRESERVE_STATE=false
+PRESERVE_STATE=true
 IMPORT_SUNSHINE_CONFIG=false
 
 usage() {
@@ -35,6 +35,9 @@ Options:
   --preserve-state          Keep existing Lumina credentials, TLS identity, and pairings
   --import-sunshine-config  Copy an existing ~/.config/sunshine installation into Lumina
   -h, --help                Show this help message
+
+Existing Lumina configuration, application entries, and customized launch
+scripts are preserved automatically during upgrades.
 EOF
 }
 
@@ -122,6 +125,8 @@ DEPS=(
     node            # Web UI build toolchain (Vue 3 + Vite)
     icu4c@78        # Unicode support (Boost.Locale dependency)
     miniupnpc       # UPnP port mapping for automatic NAT traversal
+    qtbase          # Qt system tray runtime
+    qtsvg           # Qt SVG support used by the tray backend
 )
 
 for dep in "${DEPS[@]}"; do
@@ -180,6 +185,8 @@ cmake -DCMAKE_BUILD_TYPE=Release \
   -DSUNSHINE_ASSETS_DIR="$INSTALL_DIR/assets" \
   -DSUNSHINE_BUILD_HOMEBREW=ON \
   -DSUNSHINE_ENABLE_TRAY=ON \
+  -DCMAKE_PREFIX_PATH="$(brew --prefix qtbase);$(brew --prefix qtsvg)" \
+  -DQt6Svg_DIR="$(brew --prefix qtsvg)/lib/cmake/Qt6Svg" \
   -DSUNSHINE_PUBLISHER_NAME="jayl-dev" \
   -DSUNSHINE_PUBLISHER_WEBSITE="https://github.com/jayl-dev/Lumina" \
   -DSUNSHINE_PUBLISHER_ISSUE_URL="https://github.com/jayl-dev/Lumina/issues" \
@@ -278,20 +285,18 @@ cat > "$INSTALL_DIR/hid_entitlements.plist" << 'PLIST'
 </plist>
 PLIST
 
-# Copy example launch scripts
+# Copy example launch scripts without replacing local customizations.
 if [ -d "$LUMINA_DIR/scripts" ]; then
-    if [ "$IMPORT_SUNSHINE_CONFIG" = true ]; then
-        cp -n "$LUMINA_DIR/scripts/"*.sh "$CONFIG_DIR/scripts/" 2>/dev/null || true
-    else
-        cp -f "$LUMINA_DIR/scripts/"*.sh "$CONFIG_DIR/scripts/" 2>/dev/null
-    fi
+    cp -n "$LUMINA_DIR/scripts/"*.sh "$CONFIG_DIR/scripts/" 2>/dev/null || true
     chmod +x "$CONFIG_DIR/scripts/"*.sh 2>/dev/null
     ok "Installed example launch scripts"
 fi
 
-# Write fresh defaults unless the user explicitly imported Sunshine settings.
-if [ "$IMPORT_SUNSHINE_CONFIG" = true ] && [ -f "$CONFIG_DIR/sunshine.conf" ]; then
-    ok "Using imported configuration at $CONFIG_DIR/sunshine.conf"
+# Never replace an existing configuration during an upgrade. Imported Sunshine
+# files are copied with cp -n above, so this also preserves existing Lumina
+# settings when --import-sunshine-config is used.
+if [ -f "$CONFIG_DIR/sunshine.conf" ]; then
+    ok "Preserved configuration at $CONFIG_DIR/sunshine.conf"
 else
 cat > "$CONFIG_DIR/sunshine.conf" << 'CONF'
 # Lumina Configuration
@@ -308,7 +313,7 @@ max_bitrate = 80000
 # Virtual display: "enabled" creates a display matching client resolution on connect.
 # The display is destroyed when the last client disconnects.
 # Set to "disabled" to use a physical display or BetterDisplay instead.
-virtual_display = enabled
+virtual_display = disabled
 
 # UPnP: automatic port mapping for remote access through NAT
 upnp = enabled
@@ -320,8 +325,8 @@ CONF
 ok "Config written to $CONFIG_DIR/sunshine.conf"
 fi
 
-if [ "$IMPORT_SUNSHINE_CONFIG" = true ] && [ -f "$CONFIG_DIR/apps.json" ]; then
-    ok "Using imported application list at $CONFIG_DIR/apps.json"
+if [ -f "$CONFIG_DIR/apps.json" ]; then
+    ok "Preserved application list at $CONFIG_DIR/apps.json"
 else
 cat > "$CONFIG_DIR/apps.json" << 'APPS'
 {

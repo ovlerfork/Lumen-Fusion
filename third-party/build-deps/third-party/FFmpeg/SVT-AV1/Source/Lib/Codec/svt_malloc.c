@@ -8,57 +8,39 @@
 * Media Patent License 1.0 was not distributed with this source code in the
 * PATENTS file, you can obtain it at https://www.aomedia.org/license/patent-license.
 */
-#include <stdint.h>
-#include <limits.h>
-
 #include "svt_malloc.h"
-#include "svt_threads.h"
+
 #define LOG_TAG "SvtMalloc"
 #include "svt_log.h"
-#include "utility.h"
 
 void svt_print_alloc_fail_impl(const char* file, int line) {
     SVT_FATAL("allocate memory failed, at %s:%d\n", file, line);
 }
 
 #ifdef DEBUG_MEMORY_USAGE
+#include <stdint.h>
+#include <limits.h>
+#include "definitions.h"
+#include "svt_threads.h"
 
 static EbHandle g_malloc_mutex;
 
-static void malloc_mutex_cleanup(void) { svt_destroy_mutex(g_malloc_mutex); }
-static void create_malloc_mutex(void) {
+static void malloc_mutex_cleanup(void) {
+    svt_destroy_mutex(g_malloc_mutex);
+}
+
+static ONCE_ROUTINE(create_malloc_mutex) {
     g_malloc_mutex = svt_create_mutex();
     atexit(malloc_mutex_cleanup);
+    ONCE_ROUTINE_EPILOG;
 }
 
-#ifdef _WIN32
-
-#include <windows.h>
-
-static INIT_ONCE g_malloc_once = INIT_ONCE_STATIC_INIT;
-
-BOOL CALLBACK create_malloc_mutex_wrapper(PINIT_ONCE InitOnce, PVOID Parameter, PVOID* lpContext) {
-    (void)InitOnce;
-    (void)Parameter;
-    (void)lpContext;
-    create_malloc_mutex();
-    return true;
-}
+DEFINE_ONCE(g_malloc_once);
 
 static EbHandle get_malloc_mutex() {
-    InitOnceExecuteOnce(&g_malloc_once, create_malloc_mutex_wrapper, NULL, NULL);
+    svt_run_once(&g_malloc_once, create_malloc_mutex);
     return g_malloc_mutex;
 }
-#else
-#include <pthread.h>
-
-static pthread_once_t g_malloc_once = PTHREAD_ONCE_INIT;
-
-static EbHandle get_malloc_mutex() {
-    pthread_once(&g_malloc_once, create_malloc_mutex);
-    return g_malloc_mutex;
-}
-#endif // _WIN32
 
 // Simple hash function to speed up entry search
 // Takes the top half and bottom half of the pointer and adds them together.
@@ -130,8 +112,9 @@ static bool for_each_hash_entry(MemoryEntry* bucket, uint32_t start, Predicate p
 
     do {
         MemoryEntry* e = bucket + i;
-        if (pred(e, param))
+        if (pred(e, param)) {
             return true;
+        }
         i++;
         i = TO_INDEX(i);
     } while (i != s);
@@ -155,7 +138,7 @@ static const char* mem_type_name(EbPtrType type) {
 
 static bool add_mem_entry(MemoryEntry* e, void* param) {
     if (!e->ptr) {
-        EB_MEMCPY(e, param, sizeof(*e));
+        *e = *(MemoryEntry*)param;
         return true;
     }
     return false;
@@ -219,8 +202,9 @@ static bool add_location(MemoryEntry* e, void* param) {
 
 static bool collect_mem(MemoryEntry* e, void* param) {
     EbPtrType* type = param;
-    if (e->ptr && e->type == *type)
+    if (e->ptr && e->type == *type) {
         for_each_hash_entry(g_profile_entry, 0, add_location, e);
+    }
     //Loop entire bucket.
     return false;
 }
@@ -312,8 +296,9 @@ void svt_decrease_component_count() {
     if (!g_component_count) {
         bool leaked = false;
         for_each_hash_entry(g_mem_entry, 0, print_leak, &leaked);
-        if (!leaked)
+        if (!leaked) {
             SVT_INFO("you have no memory leak\n");
+        }
     }
     svt_release_mutex(m);
 }
@@ -321,8 +306,9 @@ void svt_decrease_component_count() {
 void svt_add_mem_entry_impl(void* ptr, EbPtrType type, size_t count, const char* file, uint32_t line) {
     if (for_each_mem_entry(hash(ptr),
                            add_mem_entry,
-                           &(MemoryEntry){.ptr = ptr, .type = type, .count = count, .file = file, .line = line}))
+                           &(MemoryEntry){.ptr = ptr, .type = type, .count = count, .file = file, .line = line})) {
         return;
+    }
     if (g_add_mem_entry_warning) {
         SVT_ERROR(
             "can't add memory entry.\n"
@@ -332,10 +318,12 @@ void svt_add_mem_entry_impl(void* ptr, EbPtrType type, size_t count, const char*
 }
 
 void svt_remove_mem_entry(void* ptr, EbPtrType type) {
-    if (!ptr)
+    if (!ptr) {
         return;
-    if (for_each_mem_entry(hash(ptr), remove_mem_entry, &(MemoryEntry){.ptr = ptr, .type = type}))
+    }
+    if (for_each_mem_entry(hash(ptr), remove_mem_entry, &(MemoryEntry){.ptr = ptr, .type = type})) {
         return;
+    }
     if (g_remove_mem_entry_warning) {
         SVT_ERROR("something wrong. you freed a unallocated memory %p, type = %s\n", ptr, mem_type_name(type));
         g_remove_mem_entry_warning = false;

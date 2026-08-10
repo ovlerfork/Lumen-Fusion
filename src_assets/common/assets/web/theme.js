@@ -7,22 +7,25 @@ export const getPreferredTheme = () => {
         return storedTheme
     }
 
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+    return 'sunshine'
 }
 
 // Define which themes are dark (for Bootstrap compatibility)
 const darkThemes = new Set([
     'dark',
+    'dracula',
     'ember',
     'midnight',
+    'mocha',
     'moonlight',
     'nord',
+    'rose-pine',
     'slate',
 ])
 
 const setTheme = theme => {
     if (theme === 'auto') {
-        const preferredTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+        const preferredTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'sunshine'
         document.documentElement.dataset.bsTheme = preferredTheme
         document.documentElement.dataset.theme = preferredTheme
         console.log(`Theme set to auto (resolved to: ${preferredTheme})`)
@@ -78,16 +81,30 @@ export const showActiveTheme = (theme, focus = false) => {
     }
 }
 
+const applyTheme = theme => {
+    setStoredTheme(theme)
+    setTheme(theme)
+    showActiveTheme(theme, true)
+}
+
+const pickRandomTheme = () => {
+    const current = getStoredTheme()
+    const values = Array.from(document.querySelectorAll('[data-bs-theme-value]'))
+        .map(el => el.dataset.bsThemeValue)
+        .filter(value => value !== 'auto' && value !== current)
+    return values[Math.floor(Math.random() * values.length)]  // NOSONAR(javascript:S2245) random not used for cryptography here
+}
+
 export function setupThemeToggleListener() {
     document.querySelectorAll('[data-bs-theme-value]')
         .forEach(toggle => {
-            toggle.addEventListener('click', () => {
-                const theme = toggle.getAttribute('data-bs-theme-value')
-                setStoredTheme(theme)
-                setTheme(theme)
-                showActiveTheme(theme, true)
-            })
+            toggle.addEventListener('click', () => applyTheme(toggle.dataset.bsThemeValue))
         })
+
+    const randomToggle = document.querySelector('#bd-theme-random')
+    if (randomToggle) {
+        randomToggle.addEventListener('click', () => applyTheme(pickRandomTheme()))
+    }
 
     showActiveTheme(getPreferredTheme(), false)
 }

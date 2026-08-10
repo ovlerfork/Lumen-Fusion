@@ -7,7 +7,7 @@
 
 <body id="app" v-cloak>
   <Navbar></Navbar>
-  <div class="container">
+  <div id="content" class="container">
     <h1 class="my-4">{{ $t('troubleshooting.troubleshooting') }}</h1>
     <!-- ViGEmBus Installation -->
     <div class="card my-4" v-if="platform === 'windows' && controllerEnabled">
@@ -70,7 +70,7 @@
         </div>
       </div>
     </div>
-    <!-- Restart Lumina -->
+    <!-- Restart Sunshine -->
     <div class="card my-4">
       <div class="card-body">
         <h2 id="restart">{{ $t('troubleshooting.restart_sunshine') }}</h2>
@@ -219,7 +219,7 @@
       Search,
       Trash2,
       XCircle,
-    } from 'lucide-vue-next'
+    } from '@lucide/vue'
 
     const app = createApp({
       components: {
@@ -316,7 +316,7 @@
             if (!raw) continue;
 
             // Determine level based on the *first* level token in the entry.
-            // Lumina logs are typically: "[ts]: Level: message".
+            // Sunshine logs are typically: "[ts]: Level: message".
             // Some messages may contain additional embedded timestamps, but we treat
             // those as part of the entry content.
             let level = 'Info';
@@ -409,7 +409,6 @@
       },
       beforeDestroy() {
         clearInterval(this.logInterval);
-        clearTimeout(this._logsCopyTimeout);
       },
       methods: {
         refreshLogs() {
@@ -463,10 +462,10 @@
           }).then(() => {
             this.showApplyMessage = true;
             this.refreshClients();
-            });
+          });
         },
         toggleClient(uuid, enabled) {
-          apiFetch("./api/clients/update", {
+          fetch("./api/clients/update", {
             method: "POST",
             headers: {
               'Content-Type': 'application/json'

@@ -10,32 +10,23 @@
 */
 
 #include "picture_operators_c.h"
+#include <stdint.h>
+#include <stdio.h>
 #include "utility.h"
 #include "common_dsp_rtcd.h"
-/*********************************
-* Picture Average
-*********************************/
-void svt_picture_average_kernel_c(EbByte src0, uint32_t src0_stride, EbByte src1, uint32_t src1_stride, EbByte dst,
-                                  uint32_t dst_stride, uint32_t area_width, uint32_t area_height) {
-    uint32_t x, y;
-
-    for (y = 0; y < area_height; y++) {
-        for (x = 0; x < area_width; x++) { dst[x] = (src0[x] + src1[x] + 1) >> 1; }
-        src0 += src0_stride;
-        src1 += src1_stride;
-        dst += dst_stride;
-    }
-}
-
-void svt_picture_average_kernel1_line_c(EbByte src0, EbByte src1, EbByte dst, uint32_t areaWidth) {
-    uint32_t i;
-    for (i = 0; i < areaWidth; i++) dst[i] = (src0[i] + src1[i] + 1) / 2;
-}
+#include "ac_bias.h"
 
 /*********************************
 * Picture Copy Kernel
 *********************************/
-void svt_memcpy_c(void* dst_ptr, void const* src_ptr, size_t size) { memcpy(dst_ptr, src_ptr, size); }
+void svt_memcpy_c(void* dst_ptr, void const* src_ptr, size_t size) {
+    memcpy(dst_ptr, src_ptr, size);
+}
+
+void svt_memset_c(void* dst_ptr, int c, size_t size) {
+    memset(dst_ptr, c, size);
+}
+
 void svt_aom_picture_copy_kernel(EbByte src, uint32_t src_stride, EbByte dst, uint32_t dst_stride, uint32_t area_width,
                                  uint32_t area_height,
                                  uint32_t bytes_per_sample) //=1 always)
@@ -97,22 +88,30 @@ void svt_aom_hadamard_4x4_c(const int16_t* src_diff, ptrdiff_t src_stride, int32
     int16_t  buffer2[16];
     int16_t* tmp_buf = &buffer[0];
     for (idx = 0; idx < 4; ++idx) {
-        hadamard_col4(src_diff, src_stride, tmp_buf); // src_diff: 9 bit
-            // dynamic range [-255, 255]
+        // src_diff: 9 bit (8b), 13 bit (HBD)
+        // dynamic range [-255, 255] (8b), [-4095, 4095] (HBD)
+        hadamard_col4(src_diff, src_stride, tmp_buf);
         tmp_buf += 4;
         ++src_diff;
     }
 
     tmp_buf = &buffer[0];
     for (idx = 0; idx < 4; ++idx) {
-        hadamard_col4(tmp_buf, 4, buffer2 + 4 * idx); // tmp_buf: 12 bit
-        // dynamic range [-2040, 2040]
-        // buffer2: 15 bit
-        // dynamic range [-16320, 16320]
+        // tmp_buf: 10 bit (8b), 14 bit (HBD)
+        // dynamic range [-510, 510] (8b), [-8190, 8190] (HBD)
+        // buffer2: 11 bit (8b), 15 bit (HBD)
+        // dynamic range [-1020, 1020] (8b), [-16380, 16380] (HBD)
+        hadamard_col4(tmp_buf, 4, buffer2 + 4 * idx);
+
         ++tmp_buf;
     }
 
-    for (idx = 0; idx < 16; ++idx) coeff[idx] = (int32_t)buffer2[idx];
+    // Extra transpose to match SSE2 behavior(i.e., svt_aom_hadamard_4x4_sse2).
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
+            coeff[i * 4 + j] = (int32_t)buffer2[j * 4 + i];
+        }
+    }
 }
 
 // src_diff: first pass, 9 bit, dynamic range [-255, 255]
@@ -155,7 +154,7 @@ void svt_aom_hadamard_8x8_c(const int16_t* src_diff, ptrdiff_t src_stride, int32
     int16_t* tmp_buf = &buffer[0];
     for (idx = 0; idx < 8; ++idx) {
         hadamard_col8(src_diff, src_stride, tmp_buf); // src_diff: 9 bit
-            // dynamic range [-255, 255]
+        // dynamic range [-255, 255]
         tmp_buf += 8;
         ++src_diff;
     }
@@ -169,7 +168,97 @@ void svt_aom_hadamard_8x8_c(const int16_t* src_diff, ptrdiff_t src_stride, int32
         ++tmp_buf;
     }
 
-    for (idx = 0; idx < 64; ++idx) coeff[idx] = (int32_t)buffer2[idx];
+    for (idx = 0; idx < 64; ++idx) {
+        coeff[idx] = (int32_t)buffer2[idx];
+    }
+}
+
+static void hadamard_highbd_col8_first_pass(const int16_t* src_diff, ptrdiff_t src_stride, int16_t* coeff) {
+    int16_t b0 = src_diff[0 * src_stride] + src_diff[1 * src_stride];
+    int16_t b1 = src_diff[0 * src_stride] - src_diff[1 * src_stride];
+    int16_t b2 = src_diff[2 * src_stride] + src_diff[3 * src_stride];
+    int16_t b3 = src_diff[2 * src_stride] - src_diff[3 * src_stride];
+    int16_t b4 = src_diff[4 * src_stride] + src_diff[5 * src_stride];
+    int16_t b5 = src_diff[4 * src_stride] - src_diff[5 * src_stride];
+    int16_t b6 = src_diff[6 * src_stride] + src_diff[7 * src_stride];
+    int16_t b7 = src_diff[6 * src_stride] - src_diff[7 * src_stride];
+
+    int16_t c0 = b0 + b2;
+    int16_t c1 = b1 + b3;
+    int16_t c2 = b0 - b2;
+    int16_t c3 = b1 - b3;
+    int16_t c4 = b4 + b6;
+    int16_t c5 = b5 + b7;
+    int16_t c6 = b4 - b6;
+    int16_t c7 = b5 - b7;
+
+    coeff[0] = c0 + c4;
+    coeff[7] = c1 + c5;
+    coeff[3] = c2 + c6;
+    coeff[4] = c3 + c7;
+    coeff[2] = c0 - c4;
+    coeff[6] = c1 - c5;
+    coeff[1] = c2 - c6;
+    coeff[5] = c3 - c7;
+}
+
+// src_diff: 16 bit, dynamic range [-32760, 32760]
+// coeff: 19 bit
+static void hadamard_highbd_col8_second_pass(const int16_t* src_diff, ptrdiff_t src_stride, int32_t* coeff) {
+    int32_t b0 = src_diff[0 * src_stride] + src_diff[1 * src_stride];
+    int32_t b1 = src_diff[0 * src_stride] - src_diff[1 * src_stride];
+    int32_t b2 = src_diff[2 * src_stride] + src_diff[3 * src_stride];
+    int32_t b3 = src_diff[2 * src_stride] - src_diff[3 * src_stride];
+    int32_t b4 = src_diff[4 * src_stride] + src_diff[5 * src_stride];
+    int32_t b5 = src_diff[4 * src_stride] - src_diff[5 * src_stride];
+    int32_t b6 = src_diff[6 * src_stride] + src_diff[7 * src_stride];
+    int32_t b7 = src_diff[6 * src_stride] - src_diff[7 * src_stride];
+
+    int32_t c0 = b0 + b2;
+    int32_t c1 = b1 + b3;
+    int32_t c2 = b0 - b2;
+    int32_t c3 = b1 - b3;
+    int32_t c4 = b4 + b6;
+    int32_t c5 = b5 + b7;
+    int32_t c6 = b4 - b6;
+    int32_t c7 = b5 - b7;
+
+    coeff[0] = c0 + c4;
+    coeff[7] = c1 + c5;
+    coeff[3] = c2 + c6;
+    coeff[4] = c3 + c7;
+    coeff[2] = c0 - c4;
+    coeff[6] = c1 - c5;
+    coeff[1] = c2 - c6;
+    coeff[5] = c3 - c7;
+}
+
+// The order of the output coeff of the hadamard is not important. For
+// optimization purposes the final transpose may be skipped.
+void svt_aom_highbd_hadamard_8x8_c(const int16_t* src_diff, ptrdiff_t src_stride, int32_t* coeff) {
+    int      idx;
+    int16_t  buffer[64];
+    int32_t  buffer2[64];
+    int16_t* tmp_buf = &buffer[0];
+    for (idx = 0; idx < 8; ++idx) {
+        // src_diff: 13 bit
+        // buffer: 16 bit, dynamic range [-32760, 32760]
+        hadamard_highbd_col8_first_pass(src_diff, src_stride, tmp_buf);
+        tmp_buf += 8;
+        ++src_diff;
+    }
+
+    tmp_buf = &buffer[0];
+    for (idx = 0; idx < 8; ++idx) {
+        // buffer: 16 bit
+        // buffer2: 19 bit, dynamic range [-262080, 262080]
+        hadamard_highbd_col8_second_pass(tmp_buf, 8, buffer2 + 8 * idx);
+        ++tmp_buf;
+    }
+
+    for (idx = 0; idx < 64; ++idx) {
+        coeff[idx] = (int32_t)buffer2[idx];
+    }
 }
 
 // In place 16x16 2D Hadamard transform
@@ -228,5 +317,19 @@ void svt_aom_hadamard_32x32_c(const int16_t* src_diff, ptrdiff_t src_stride, int
         coeff[768] = b1 - b3;
 
         ++coeff;
+    }
+}
+
+void svt_av1_copy_wxh_8bit_c(uint8_t* src, uint32_t src_stride, uint8_t* dst, uint32_t dst_stride, uint32_t height,
+                             uint32_t width) {
+    for (uint32_t j = 0; j < height; j++) {
+        svt_memcpy_c(dst + j * dst_stride, src + j * src_stride, width);
+    }
+}
+
+void svt_av1_copy_wxh_16bit_c(uint16_t* src, uint32_t src_stride, uint16_t* dst, uint32_t dst_stride, uint32_t height,
+                              uint32_t width) {
+    for (uint32_t j = 0; j < height; j++) {
+        svt_memcpy_c(dst + j * dst_stride, src + j * src_stride, width * 2);
     }
 }

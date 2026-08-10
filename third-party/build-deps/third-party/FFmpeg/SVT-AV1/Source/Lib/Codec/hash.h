@@ -18,18 +18,15 @@
 extern "C" {
 #endif
 
-typedef struct _crc_calculator {
-    uint32_t remainder;
-    uint32_t trunc_poly;
-    uint32_t bits;
-    uint32_t table[256];
-    uint32_t final_result_mask;
-} CRC_CALCULATOR;
+/* Build the process-wide table used by the software fall-back CRC-32C kernel
+ * (svt_av1_get_crc32c_value_c); called once at library init
+ * (init_global_tables) and read-only afterwards. The hardware kernels need no
+ * setup. */
+void svt_av1_crc32c_table_init(void);
 
-// Initialize the crc calculator. It must be executed at least once before
-// calling svt_av1_get_crc_value().
-void     svt_av1_crc_calculator_init(CRC_CALCULATOR *p_crc_calculator, uint32_t bits, uint32_t truncPoly);
-uint32_t svt_av1_get_crc_value(void *crc_calculator, uint8_t *p, int length);
+// Number of 2x2 pixel blocks per superblock
+// The biggest superblock supported by AV1 is 128x128, therefore there can be
+// a maximum of 64x64 blocks per superblock: 64 * 64 = 4096
 #define AOM_BUFFER_SIZE_FOR_BLOCK_HASH (4096)
 
 #ifdef __cplusplus

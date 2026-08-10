@@ -71,7 +71,7 @@ The feature is currently active only when screen content encoding is active, eit
 
 | **Flag**      | **Level (Sequence/Picture)** | **Description**                                                                                                                        |
 | ---           | ---                          | ---                                                                                                                                    |
-| --scm         | Sequence                     | Command line token. 0: No SC, 1: SC ON 2: Auto mode (detector based)                                                                   |
+| --scm         | Sequence                     | Command line token. 0: None, 1: Block Copy + Palette, 2: Auto mode (detector based), 3: Auto mode (anti-alias aware)                   |
 | palette_level | Picture based                | Set based on the configuration palette mode.                                                                                           |
 
 
@@ -146,7 +146,7 @@ regarding palette prediction:
 ## Notes
 
 The feature settings that are described in this document were compiled at
-v3.1.2 of the code and may not reflect the current status of the code. The
+v4.2.0 of the code and may not reflect the current status of the code. The
 description in this document represents an example showing how features would
 interact with the SVT architecture. For the most up-to-date settings, it's
 recommended to review the section of the code implementing this feature.

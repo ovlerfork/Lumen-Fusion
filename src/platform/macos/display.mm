@@ -2,8 +2,15 @@
  * @file src/platform/macos/display.mm
  * @brief Definitions for display capture on macOS.
  */
+
+// standard includes
+#include <charconv>
+#include <optional>
+#include <string_view>
+
 // local includes
 #include "src/config.h"
+#include "src/display_device.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
 #include "src/platform/macos/av_img_t.h"
@@ -21,6 +28,24 @@ namespace fs = std::filesystem;
 
 namespace platf {
   using namespace std::literals;
+
+  namespace {
+    std::optional<CGDirectDisplayID> parse_display_id(std::string_view display_name) {
+      if (display_name.empty()) {
+        return std::nullopt;
+      }
+
+      CGDirectDisplayID display_id {};
+      const auto *const begin = display_name.data();
+      const auto *const end = begin + display_name.size();
+      const auto [ptr, ec] = std::from_chars(begin, end, display_id);
+      if (ec != std::errc {} || ptr != end) {
+        return std::nullopt;
+      }
+
+      return display_id;
+    }
+  }  // namespace
 
   /**
    * @brief Process a CMSampleBuffer frame into an img_t for the encoder pipeline.
@@ -338,15 +363,30 @@ namespace platf {
       // Default to main display
       selected_display_id = CGMainDisplayID();
 
-      // Print all displays available with it's name and id
-      auto display_array = [AVVideo displayNames];
-      BOOST_LOG(info) << "Detecting displays"sv;
-      for (NSDictionary *item in display_array) {
-        NSNumber *display_id = item[@"id"];
-        NSString *name = item[@"displayName"];
-        BOOST_LOG(info) << "Detected display: "sv << name.UTF8String << " (id: "sv << [NSString stringWithFormat:@"%@", display_id].UTF8String << ") connected: true"sv;
-        if (!display_name.empty() && std::atoi(display_name.c_str()) == [display_id unsignedIntValue]) {
-          selected_display_id = [display_id unsignedIntValue];
+      if (const auto configured_display_id = parse_display_id(display_name)) {
+        selected_display_id = *configured_display_id;
+      } else if (!display_name.empty()) {
+        BOOST_LOG(warning) << "Configured display ["sv << display_name
+                           << "] is not a valid macOS capture display id. Falling back to main display ["sv
+                           << selected_display_id << "]."sv;
+      }
+
+      // Prefer Sunshine's libdisplaydevice enumeration when the active
+      // dependency supports macOS, with the native list as a compatibility fallback.
+      BOOST_LOG(debug) << "Detecting displays"sv;
+      const auto devices = display_device::enumerate_devices();
+      if (!devices.empty()) {
+        for (const auto &device : devices) {
+          if (!device.m_display_name.empty()) {
+            BOOST_LOG(debug) << "Detected display: "sv << device.m_friendly_name
+                             << " (id: "sv << device.m_display_name << ") connected: true"sv;
+          }
+        }
+      } else {
+        for (NSDictionary *item in [AVVideo displayNames]) {
+          NSNumber *display_id = item[@"id"];
+          NSString *name = item[@"displayName"];
+          BOOST_LOG(debug) << "Detected display: "sv << name.UTF8String << " (id: "sv << [NSString stringWithFormat:@"%@", display_id].UTF8String << ") connected: true"sv;
         }
       }
     }
@@ -393,6 +433,21 @@ namespace platf {
 
   std::vector<std::string> display_names(mem_type_e hwdevice_type) {
     __block std::vector<std::string> display_names;
+
+    if (hwdevice_type != platf::mem_type_e::system && hwdevice_type != platf::mem_type_e::videotoolbox) {
+      return display_names;
+    }
+
+    const auto devices = display_device::enumerate_devices();
+    if (!devices.empty()) {
+      display_names.reserve(devices.size());
+      for (const auto &device : devices) {
+        if (!device.m_display_name.empty()) {
+          display_names.emplace_back(device.m_display_name);
+        }
+      }
+      return display_names;
+    }
 
     auto display_array = [AVVideo displayNames];
 

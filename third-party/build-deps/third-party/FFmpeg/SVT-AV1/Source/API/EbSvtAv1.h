@@ -25,9 +25,9 @@ extern "C" {
 struct SvtMetadataArray;
 
 // API Version
-#define SVT_AV1_VERSION_MAJOR 3
-#define SVT_AV1_VERSION_MINOR 1
-#define SVT_AV1_VERSION_PATCHLEVEL 2
+#define SVT_AV1_VERSION_MAJOR 4
+#define SVT_AV1_VERSION_MINOR 2
+#define SVT_AV1_VERSION_PATCHLEVEL 0
 
 #define SVT_AV1_CHECK_VERSION(major, minor, patch)                                                               \
     (SVT_AV1_VERSION_MAJOR > (major) || (SVT_AV1_VERSION_MAJOR == (major) && SVT_AV1_VERSION_MINOR > (minor)) || \
@@ -82,13 +82,13 @@ typedef struct EbBufferHeaderType {
     uint32_t size;
 
     // picture (input or output) buffer
-    uint8_t *p_buffer;
+    uint8_t* p_buffer;
     uint32_t n_filled_len;
     uint32_t n_alloc_len;
 
     // pic private data
-    void *p_app_private;
-    void *wrapper_ptr;
+    void* p_app_private;
+    void* wrapper_ptr;
 
     // pic timing param
     uint32_t n_tick_count;
@@ -110,13 +110,13 @@ typedef struct EbBufferHeaderType {
     double cr_ssim;
     double cb_ssim;
 
-    struct SvtMetadataArray *metadata;
+    struct SvtMetadataArray* metadata;
 } EbBufferHeaderType;
 
 typedef struct EbComponentType {
     uint32_t size;
-    void    *p_component_private;
-    void    *p_application_private;
+    void*    p_component_private;
+    void*    p_application_private;
 } EbComponentType;
 
 typedef enum EbErrorType {
@@ -150,9 +150,9 @@ typedef enum EbAv1SeqProfile { MAIN_PROFILE = 0, HIGH_PROFILE = 1, PROFESSIONAL_
 typedef struct EbSvtIOFormat //former EbSvtEncInput
 {
     // Hosts 8 bit or 16 bit input YUV420p / YUV420p10le
-    uint8_t *luma;
-    uint8_t *cb;
-    uint8_t *cr;
+    uint8_t* luma;
+    uint8_t* cb;
+    uint8_t* cr;
     uint32_t y_stride;
     uint32_t cr_stride;
     uint32_t cb_stride;
@@ -231,29 +231,6 @@ typedef struct EbColorConfig {
     bool separate_uv_delta_q;
 } EbColorConfig;
 
-typedef struct EbTimingInfo {
-    /*!< Timing info present flag */
-    bool timing_info_present;
-
-    /*!< Number of time units of a clock operating at the frequency time_scale
-     * Hz that corresponds to one increment of a clock tick counter*/
-    uint32_t num_units_in_display_tick;
-
-    /*!< Number of time units that pass in one second*/
-    uint32_t time_scale;
-
-    /*!< Equal to 1 indicates that pictures should be displayed according to
-     * their output order with the number of ticks between two consecutive
-     * pictures specified by num_ticks_per_picture.*/
-    uint8_t equal_picture_interval;
-
-    /*!< Specifies the number of clock ticks corresponding to output time
-     * between two consecutive pictures in the output order.
-     * Range - [0 to (1 << 32) - 2]*/
-    uint32_t num_ticks_per_picture;
-
-} EbTimingInfo;
-
 // structure to be allocated at the sample application and passed to the library
 // on a per picture basis through the p_app_private field in the EbBufferHeaderType structure
 // this structure and the data inside would be casted, validated, then copied at the
@@ -264,33 +241,44 @@ typedef enum {
     REF_FRAME_SCALING_EVENT, // reference frame scaling data per picture
     ROI_MAP_EVENT, // ROI map data per picture
     RES_CHANGE_EVENT, // resolution change data per picture (KF only)
-    RATE_CHANGE_EVENT, // Rate change data per picture (KF only)
+    RATE_CHANGE_EVENT, // Rate change data per picture
+    FRAME_RATE_CHANGE_EVENT, // Frame rate change data per picture
+    COMPUTE_QUALITY_EVENT, // Compute quality per frame
+    PRESET_CHANGE_EVENT, // Preset (enc_mode) change data per picture
+    REF_STORE_EVENT, // Ref-frame management: STORE current frame in DPB with pic_id (payload: SvtAv1RefFrameCmd)
+    REF_CLEAR_EVENT, // Ref-frame management: release a previously STOREd pic_id (payload: SvtAv1RefFrameCmd)
+    REF_USE_EVENT, // Ref-frame management: predict current frame from a STOREd ref (payload: SvtAv1RefFrameCmd)
+    MG_SIZE_CHANGE_EVENT, //MG size change data per picture
     PRIVATE_DATA_TYPES // end of private data types
 } PrivDataType;
+
 typedef struct EbPrivDataNode {
     PrivDataType           node_type;
-    void                  *data; // pointer to data structure e.g. EbRefFrameScale or AomFilmGrain
+    void*                  data; // pointer to data structure e.g. EbRefFrameScale or AomFilmGrain
     uint32_t               size; // size of data being sent for the library to know how much to copy
-    struct EbPrivDataNode *next; // pointer to the next node, NULL if done.
+    struct EbPrivDataNode* next; // pointer to the next node, NULL if done.
 } EbPrivDataNode;
+
 typedef struct EbRefFrameScale {
     uint8_t  scale_mode; // scaling mode, support for RESIZE_NONE, RESIZE_FIXED and RESIZE_RANDOM
     uint32_t scale_denom; // scaling denominator for non-key frame, from 8~16
     uint32_t scale_kf_denom; // scaling denominator for key frame, from 8~16
 } EbRefFrameScale;
+
 typedef struct SvtAv1RoiMapEvt {
     uint64_t                start_picture_number;
-    uint8_t                *b64_seg_map;
+    uint8_t*                b64_seg_map;
     int16_t                 seg_qp[8]; // 8: MAX_SEGMENTS
     int8_t                  max_seg_id;
-    struct SvtAv1RoiMapEvt *next;
+    struct SvtAv1RoiMapEvt* next;
 } SvtAv1RoiMapEvt;
+
 typedef struct SvtAv1RoiMap {
     uint32_t         evt_num;
-    SvtAv1RoiMapEvt *evt_list;
-    SvtAv1RoiMapEvt *cur_evt;
-    int16_t         *qp_map;
-    char            *buf;
+    SvtAv1RoiMapEvt* evt_list;
+    SvtAv1RoiMapEvt* cur_evt;
+    int16_t*         qp_map;
+    char*            buf;
 } SvtAv1RoiMap;
 
 typedef struct SvtAv1InputPicDef {
@@ -299,11 +287,66 @@ typedef struct SvtAv1InputPicDef {
     uint16_t input_pad_bottom;
     uint16_t input_pad_right;
 } SvtAv1InputPicDef;
+
 typedef struct SvtAv1RateInfo {
     // Sequence QP used in CRF/CQP algorithm. Over writes the sequence QP.
     uint32_t seq_qp;
     uint32_t target_bit_rate;
 } SvtAv1RateInfo;
+
+// Ref-frame management API — application-controlled DPB stores.
+//
+// New EbPrivDataNode event types (REF_STORE_EVENT, REF_USE_EVENT,
+// REF_CLEAR_EVENT) let an application STORE encoded frames into the AV1
+// DPB as long-term references, then USE a recovery frame to predict
+// only from a STOREd anchor. Designed for RTC error-recovery: cheaper
+// than a full keyframe when one is lost.
+//
+// At-a-glance contract:
+//   - Enable: set EbSvtAv1EncConfiguration::max_managed_refs in [1..4].
+//   - Per-event payload: SvtAv1RefFrameCmd { uint32_t pic_id; }
+//     (one STORE + one CLEAR + one USE max per input; pic_id != 0).
+//   - Required encoder config: pred_structure == LOW_DELAY,
+//     rate_control_mode == CBR, hierarchical_levels in {0,1,2}.
+//   - Events apply only on base-layer (temporal_layer_index == 0) inputs.
+//   - Key frames implicitly release all anchors.
+//   - Pre-condition violations either FAIL-HARD (returns
+//     EB_ErrorBadParameter, stamps EOS on the buffer) or ERROR + DROP
+//     (logs SVT_ERROR, no bitstream effect). The application is
+//     expected to maintain its own anchor-state model to avoid
+//     ERROR + DROP paths.
+//
+// Full workflow, configuration constraints, error-handling matrix,
+// encoder-side mrp_level override mechanics, and memory-overhead notes:
+// see src/Docs/Appendix-Ref-Frame-Management.md
+
+// Payload for the three ref-frame management events (REF_STORE_EVENT,
+// REF_CLEAR_EVENT, REF_USE_EVENT). All three share the same single-field
+// layout — only the EbPrivDataNode::node_type distinguishes them.
+typedef struct SvtAv1RefFrameCmd {
+    uint32_t pic_id; // application-chosen non-zero id; 0 is the "no event" sentinel
+} SvtAv1RefFrameCmd;
+
+typedef struct SvtAv1FrameRateInfo {
+    // Sequence frame rate which over writes the sequence frame rate.
+    uint32_t frame_rate_numerator;
+    uint32_t frame_rate_denominator;
+} SvtAv1FrameRateInfo;
+
+typedef struct SvtAv1PresetInfo {
+    // New encoder preset (enc_mode) to apply from this frame onwards.
+    int8_t enc_mode;
+} SvtAv1PresetInfo;
+
+typedef struct SvtAv1MgSizeInfo {
+    // New hierarchical levels to apply from this frame onwards.
+    uint32_t hierarchical_levels;
+} SvtAv1MgSizeInfo;
+
+typedef struct SvtAv1ComputeQualityInfo {
+    bool compute_psnr;
+    bool compute_ssim;
+} SvtAv1ComputeQualityInfo;
 
 /*!\brief Structure containing film grain synthesis parameters for a frame
      *
@@ -402,11 +445,6 @@ typedef uint64_t EbCpuFlags;
 #define EB_CPU_FLAGS_AVX512F (1 << 9)
 #define EB_CPU_FLAGS_AVX512CD (1 << 10)
 #define EB_CPU_FLAGS_AVX512DQ (1 << 11)
-#if !SVT_AV1_CHECK_VERSION(4, 0, 0)
-// Deprecated as they were never used.
-#define EB_CPU_FLAGS_AVX512ER (1 << 12)
-#define EB_CPU_FLAGS_AVX512PF (1 << 13)
-#endif
 #define EB_CPU_FLAGS_AVX512BW (1 << 14)
 #define EB_CPU_FLAGS_AVX512VL (1 << 15)
 // AVX512 extensions supported on Icelake and later (Zen 4 and later on AMD)
@@ -424,6 +462,8 @@ typedef uint64_t EbCpuFlags;
 #define EB_CPU_FLAGS_SVE (1 << 4)
 // Armv9.0-A SVE2 instructions.
 #define EB_CPU_FLAGS_SVE2 (1 << 5)
+// sad_loop_kernel has special code for this core.
+#define EB_CPU_FLAGS_NEOVERSE_V2 (1 << 6)
 
 #endif
 #define EB_CPU_FLAGS_INVALID (1ULL << (sizeof(EbCpuFlags) * 8ULL - 1ULL))

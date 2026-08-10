@@ -28,19 +28,12 @@ typedef enum EncPass {
     ENC_SECOND_PASS, // Second pass of two pass mode
     MAX_ENCODE_PASS = 2,
 } EncPass;
-typedef struct FirstPassControls {
-    uint8_t ds; // use downsampled input (0: no downsample, 1: downsample by 1 in each direction)
-} FirstPassControls;
 
 typedef struct BitstreamLevel {
     uint8_t major;
     uint8_t minor;
 } BitstreamLevel;
 
-typedef struct List0OnlyBase {
-    // Specifies whether to use List1 for BASE frame(s) or not (0: OFF, 1: ON)
-    uint8_t enabled;
-} List0OnlyBase;
 typedef struct QpBasedThScaling {
     bool tf_me_qp_based_th_scaling;
     bool tf_ref_qp_based_th_scaling;
@@ -52,7 +45,14 @@ typedef struct QpBasedThScaling {
     bool nic_pruning_qp_based_th_scaling;
     bool pme_qp_based_th_scaling;
     bool txt_qp_based_th_scaling;
+    bool cap_max_size_qp_based_th_scaling;
+    bool lpd0_qp_based_th_scaling;
+    bool intra_bc_mesh_qp_scaling;
 } QpBasedThScaling;
+
+// Forward declaration for block geometry
+struct BlockGeom;
+
 /************************************
      * Sequence Control Set
      ************************************/
@@ -60,36 +60,25 @@ typedef struct SequenceControlSet {
     /*!< Pointer to the dtor of the struct*/
     EbDctor dctor;
     /*!< Encoding context pointer containing the handle pointer */
-    EncodeContext *enc_ctx;
+    EncodeContext* enc_ctx;
     /*!< 2ndpass enc mode, available at firstpass encoder */
     /*!< API structure */
     EbSvtAv1EncConfiguration static_config;
     /*!< Super block geomerty pointer */
-    SbGeom *sb_geom;
+    SbGeom* sb_geom;
     /*!< Array of superblock parameters computed at the resource coordination stage */
-    B64Geom *b64_geom;
+    B64Geom* b64_geom;
     /*!< Bitstream level */
     BitstreamLevel level[MAX_NUM_OPERATING_POINTS];
     /*!< Sequence header structure, common between the encoder and decoder */
     SeqHeader seq_header;
 
-    /*!< Sequence coding parameters
-            parameters/features are set to be set for the full stream
-            but encoding decisions may still be taken at a picture / sub picture level
-    */
-    /*!< Maximum number of allowed temporal layers */
-    uint32_t max_temporal_layers;
-    /*!< Overflow bits used for the picture order count increments */
-    uint32_t bits_for_picture_order_count;
-    /*!< Screen change detection mode 0=OFF, 1=use decimated picture, 2=use full picture */
-    EbScdMode scd_mode;
     /*!< Number of delay frames needed to implement future window
          for algorithms such as SceneChange or TemporalFiltering */
     uint32_t scd_delay;
     /*!<  */
     EbBlockMeanPrec block_mean_calc_prec;
-    /*!< CDF (The signal changes per preset; 0: CDF update, 1: no CDF update) Default is 0.*/
-    uint8_t  cdf_mode;
+
     uint32_t svt_aom_geom_idx; //geometry type
 
     /*  1..15    | 17..31  | 33..47  |
@@ -108,9 +97,6 @@ typedef struct SequenceControlSet {
     uint8_t use_boundaries_in_rest_search;
     uint8_t enable_pic_mgr_dec_order; // if enabled: pic mgr starts pictures in dec order
     uint8_t enable_dec_order; // if enabled: encoding are in dec order
-    /*!< Use in loop motion OIS
-         Default is 1. */
-    uint8_t in_loop_ois;
     /*!< Allow the usage of motion field motion vector in the stream
         (The signal changes per preset; 0: Enabled, 1: Disabled) Default is 1. */
     uint8_t mfmv_enabled;
@@ -119,13 +105,6 @@ typedef struct SequenceControlSet {
     uint8_t enable_dg;
     /*!< Film grain seed */
     uint16_t film_grain_random_seed;
-    /*!< over_boundary_block: pad resolution to a multiple of SB for smaller overhead
-        (The signal changes per preset; 0: No over boundary blk allowed, 1: over boundary blk allowed) Default is 1.
-        to enable when md_skip_blk is on */
-    uint8_t over_boundary_block_mode;
-    /*!< Enable compound prediction to be used in the stream, decisions will be taken at a picture level subsequently
-    (The signal changes per preset; 0: compound disabled, 1: compound enabled) Default is 1. */
-    uint8_t compound_mode;
 
     /*!< Sequence resolution parameters */
     uint32_t          chroma_format_idc;
@@ -139,18 +118,14 @@ typedef struct SequenceControlSet {
     uint16_t          max_initial_input_luma_height; // max init time input luma height aligned to 8
     uint16_t          max_initial_input_pad_bottom; // max init time input pad bottom
     uint16_t          max_initial_input_pad_right; // max init time input pad right
-    uint16_t          initial_qp; // init time qp
     uint32_t          chroma_width;
     uint32_t          chroma_height;
     uint32_t          pad_right;
     uint32_t          pad_bottom;
-    uint16_t          left_padding;
-    uint16_t          top_padding;
-    uint16_t          right_padding;
-    uint16_t          bot_padding;
-    uint32_t          frame_rate; //stored in Q16
+    uint16_t          border; // Padding to be applied to picture buffers
+    double            frame_rate;
     uint32_t          encoder_bit_depth;
-    EbInputResolution input_resolution;
+    ResolutionRange   input_resolution;
 
     /*!< Super block parameters set for the stream */
     uint8_t  b64_size;
@@ -158,8 +133,12 @@ typedef struct SequenceControlSet {
     uint16_t pic_height_in_b64;
     uint16_t b64_total_count;
     uint16_t sb_size;
+    uint16_t picture_width_in_sb;
+    uint16_t picture_height_in_sb;
     uint16_t sb_total_count;
     uint16_t max_block_cnt;
+    // Pointer to block geometry table (owned by EbEncHandle)
+    struct BlockGeom* blk_geom_mds;
     /*!< Restoration Unit parameters set for the stream */
     int32_t rest_units_per_tile;
     /*!< Sub picture reagions for picture analysis */
@@ -221,34 +200,45 @@ typedef struct SequenceControlSet {
     uint32_t rest_fifo_init_count;
 
     /*!< Thread count for each process */
-    uint32_t     picture_analysis_process_init_count;
-    uint32_t     motion_estimation_process_init_count;
-    uint32_t     source_based_operations_process_init_count;
-    uint32_t     mode_decision_configuration_process_init_count;
-    uint32_t     enc_dec_process_init_count;
-    uint32_t     entropy_coding_process_init_count;
-    uint32_t     dlf_process_init_count;
-    uint32_t     cdef_process_init_count;
-    uint32_t     rest_process_init_count;
-    uint32_t     tpl_disp_process_init_count;
-    uint32_t     total_process_init_count;
-    int32_t      lap_rc;
-    TWO_PASS     twopass;
-    double       double_frame_rate;
+    uint32_t picture_analysis_process_init_count;
+    uint32_t motion_estimation_process_init_count;
+    uint32_t source_based_operations_process_init_count;
+    uint32_t mode_decision_configuration_process_init_count;
+    uint32_t enc_dec_process_init_count;
+    uint32_t entropy_coding_process_init_count;
+    uint32_t dlf_process_init_count;
+    uint32_t cdef_process_init_count;
+    uint32_t rest_process_init_count;
+    uint32_t tpl_disp_process_init_count;
+    uint32_t total_process_init_count;
+    int32_t  lap_rc;
+    TWO_PASS twopass;
+    /*!
+    * Updated framerate for the current parallel frame.
+    * cpi->framerate is updated with new_framerate during
+    * post encode updates for parallel frames.
+    */
+    double       new_framerate;
     ScaleFactors sf_identity;
     VqCtrls      vq_ctrls;
     uint8_t      calc_hist;
+    uint8_t      detect_luma_dominant_input;
     TfControls   tf_params_per_type[3]; // [I_SLICE][BASE][L1]
     MrpCtrls     mrp_ctrls;
+    // Init-time snapshot; runtime PRESET_CHANGE_EVENT clamps mrp_ctrls
+    // list0 counts to MIN(init, runtime). See enc_handle.c.
+    MrpCtrls mrp_ctrls_init;
     /*!< The RC stat generation pass mode (0: The default, 1: optimized)*/
     uint8_t rc_stat_gen_pass_mode;
-    int     cqp_base_q_tf;
-    int     cqp_base_q;
+#if TUNE_CQP_CHROMA_SSIM
+    int cqp_base_q;
+#endif
     // less than 200 frames or gop_constraint_rc is set, used in VBR and set in multipass encode
-    uint8_t           is_short_clip;
-    uint8_t           passes;
-    FirstPassControls first_pass_ctrls;
-    uint8_t           final_pass_preset;
+    uint8_t is_short_clip;
+    uint8_t passes;
+    // use downsampled input for first pass
+    bool    first_pass_downsample;
+    uint8_t final_pass_preset;
     /* Specifies whether to use 16bit pipeline.
     *
     * 0: 8 bit pipeline.
@@ -263,8 +253,8 @@ typedef struct SequenceControlSet {
     uint32_t super_block_size;
     /* Picture based rate estimation
     *
-    * Default is - 1. */
-    int pic_based_rate_est;
+    * Default is false. */
+    bool pic_based_rate_est;
 
     // MD Parameters
     /* Enable the use of HBD (10-bit) for 10 bit content at the mode decision step
@@ -281,7 +271,6 @@ typedef struct SequenceControlSet {
     * Default is null.*/
     int enable_qp_scaling_flag;
 
-    int max_heirachical_level;
     /* Flag to enable the Speed Control functionality to achieve the real-time
     * encoding speed defined by dynamically changing the encoding preset to meet
     * the average speed defined in injectorFrameRate. When this parameter is set
@@ -299,9 +288,8 @@ typedef struct SequenceControlSet {
     bool stats_based_sb_lambda_modulation;
     // Desired dimensions for an externally triggered resize
     ResizePendingParams resize_pending_params;
-    // Enable low latency KF coding for RTC
-    bool          low_latency_kf;
-    List0OnlyBase list0_only_base_ctrls;
+    // Specifies whether to use List1 for BASE frame(s) or not
+    bool list0_only_base;
     // Control if feature levels are directly modulated using the sequence QP.
     // 0: No seq QP modulation
     // 1: Enable only high-QP modulation (apply conservative offsets to high QP)
@@ -314,28 +302,25 @@ typedef struct SequenceControlSet {
     QpBasedThScaling qp_based_th_scaling_ctrls;
     // If true, intra_period_length is 0 and every frame is coded with intra tools only
     bool allintra;
-    // If true, use a flat IPP pred structure, where each pic uses only the previous frame as ref
-    bool use_flat_ipp;
+    // If true, enables fast anti-alias aware screen detection
+    bool fast_aa_aware_screen_detection_mode;
 } SequenceControlSet;
+
 typedef struct EbSequenceControlSetInstance {
     EbDctor             dctor;
-    EncodeContext      *enc_ctx;
-    SequenceControlSet *scs;
+    EncodeContext*      enc_ctx;
+    SequenceControlSet* scs;
     EbHandle            config_mutex;
 } EbSequenceControlSetInstance;
 
 /**************************************
      * Extern Function Declarations
      **************************************/
-extern EbErrorType svt_sequence_control_set_instance_ctor(EbSequenceControlSetInstance *object_ptr);
+EbErrorType svt_sequence_control_set_instance_ctor(EbSequenceControlSetInstance* object_ptr);
 
-extern EbErrorType svt_aom_b64_geom_init(SequenceControlSet *scs);
-
-extern EbErrorType svt_aom_derive_input_resolution(EbInputResolution *input_resolution, uint32_t input_size);
-extern EbErrorType copy_sequence_control_set(SequenceControlSet *dst, SequenceControlSet *src);
-extern EbErrorType svt_aom_scs_set_creator(EbPtr *object_dbl_ptr, EbPtr object_init_data_ptr);
-
-EbErrorType svt_aom_sb_geom_init(SequenceControlSet *scs);
+EbErrorType svt_aom_derive_input_resolution(ResolutionRange* input_resolution, uint32_t input_size);
+EbErrorType copy_sequence_control_set(SequenceControlSet* dst, SequenceControlSet* src);
+EbErrorType svt_aom_scs_set_creator(EbPtr* object_dbl_ptr, EbPtr object_init_data_ptr);
 
 #ifdef __cplusplus
 }

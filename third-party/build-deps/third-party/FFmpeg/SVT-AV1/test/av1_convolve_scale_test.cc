@@ -230,11 +230,11 @@ class ConvolveScaleTestBase : public ::testing::Test {
         std::vector<ConvolveParams> convolve_params;
 
         ConvolveParams param_no_compound =
-            get_conv_params_no_round(0, 0, 0, nullptr, 0, 0, bd_);
+            get_conv_params_no_round(0, nullptr, 0, 0, bd_);
         convolve_params.push_back(param_no_compound);
 
         ConvolveParams param_compound_avg =
-            get_conv_params_no_round(0, 1, 0, nullptr, 0, 1, bd_);
+            get_conv_params_no_round(1, nullptr, 0, 1, bd_);
         param_compound_avg.use_dist_wtd_comp_avg = 0;
         convolve_params.push_back(param_compound_avg);
 
@@ -273,7 +273,7 @@ class ConvolveScaleTestBase : public ::testing::Test {
                     filter_x_ = av1_get_interp_filter_params_with_block_size(
                         filter_x, width_);
 
-                    for (const auto c : conv_params) {
+                    for (const auto &c : conv_params) {
                         convolve_params_ = c;
                         Prep(&rnd);
                         RunOne(true);
@@ -368,8 +368,8 @@ class LowBDConvolveScaleTest
     : public ConvolveScaleTestBase<uint8_t>,
       public ::testing::WithParamInterface<LowBDParams> {
   public:
-    virtual ~LowBDConvolveScaleTest() {
-    }
+    LowBDConvolveScaleTest() = default;
+    ~LowBDConvolveScaleTest() = default;
 
     void SetUp() {
         tst_fun_ = TEST_GET_PARAM(0);
@@ -495,6 +495,7 @@ class HighBDConvolveScaleTest
     : public ConvolveScaleTestBase<uint16_t>,
       public ::testing::WithParamInterface<HighBDParams> {
   public:
+    HighBDConvolveScaleTest() = default;
     virtual ~HighBDConvolveScaleTest() {
     }
 

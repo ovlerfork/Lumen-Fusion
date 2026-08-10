@@ -7,13 +7,7 @@ project(build-deps
 
 # Main options
 option(BUILD_ALL "Build all dependencies" ON)
-option(BUILD_ALL_LIBDISPLAYDEVICE "Build all libdisplaydevice dependencies" OFF)
 option(BUILD_ALL_SUNSHINE "Build all Sunshine dependencies" OFF)
-
-# Boost options
-option(BUILD_BOOST "Build Boost" OFF)
-option(BUILD_BOOST_LIBDISPLAYDEVICE "Build boost for libdisplaydevice" ON)
-option(BUILD_BOOST_SUNSHINE "Build boost for Sunshine" ON)
 
 # FFmpeg options
 option(BUILD_FFMPEG "Build FFmpeg" OFF)
@@ -25,6 +19,7 @@ option(BUILD_FFMPEG_CBS_PATCHES "Apply FFmpeg CBS patches" ON)
 option(BUILD_FFMPEG_MF "Build FFmpeg Media Foundation" ON)
 option(BUILD_FFMPEG_MF_PATCHES "Apply FFmpeg Media Foundation patches" ON)
 option(BUILD_FFMPEG_NV_CODEC_HEADERS "Build FFmpeg NV Codec Headers" ON)
+option(BUILD_FFMPEG_CUDA_LLVM "Build FFmpeg with cuda_llvm support when NV codec headers are enabled" ON)
 option(BUILD_FFMPEG_NV_CODEC_HEADERS_PATCHES "Apply FFmpeg NV Codec Headers patches" ON)
 option(BUILD_FFMPEG_SVT_AV1 "Build FFmpeg SVT-AV1" ON)
 option(BUILD_FFMPEG_SVT_AV1_PATCHES "Apply FFmpeg SVT-AV1 patches" ON)
@@ -34,9 +29,12 @@ option(BUILD_FFMPEG_X264 "Build FFmpeg x264" ON)
 option(BUILD_FFMPEG_X264_PATCHES "Apply FFmpeg x264 patches" ON)
 option(BUILD_FFMPEG_X265 "Build FFmpeg x265" ON)
 option(BUILD_FFMPEG_X265_PATCHES "Apply FFmpeg x265 patches" ON)
+option(BUILD_FFMPEG_VULKAN "Build FFmpeg with Vulkan video encoding support" ON)
+option(BUILD_FFMPEG_VULKAN_PATCHES "Apply FFmpeg Vulkan patches" ON)
 
 # common includes
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/apply_git_patch.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/git_fetch_tags.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/unix_path.cmake)
 
 # CPM
@@ -154,19 +152,12 @@ endif()
 UNIX_PATH(CMAKE_CURRENT_BINARY_DIR_UNIX ${CMAKE_CURRENT_BINARY_DIR})
 UNIX_PATH(CMAKE_INSTALL_PREFIX_UNIX ${CMAKE_INSTALL_PREFIX})
 
-# Set up separate install prefixes for BOOST and FFMPEG
-# This allows us to package them separately
-if(NOT DEFINED BOOST_INSTALL_PREFIX)
-    set(BOOST_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}/boost")
-endif()
 if(NOT DEFINED FFMPEG_INSTALL_PREFIX)
     set(FFMPEG_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}/ffmpeg")
 endif()
 
-UNIX_PATH(BOOST_INSTALL_PREFIX_UNIX ${BOOST_INSTALL_PREFIX})
 UNIX_PATH(FFMPEG_INSTALL_PREFIX_UNIX ${FFMPEG_INSTALL_PREFIX})
 
-message(STATUS "Boost install prefix: ${BOOST_INSTALL_PREFIX}")
 message(STATUS "FFmpeg install prefix: ${FFMPEG_INSTALL_PREFIX}")
 
 # setup pkg-config path
@@ -224,14 +215,6 @@ string(TOLOWER ${CMAKE_SYSTEM_PROCESSOR} arch)
 message(STATUS "Detected system name: ${CMAKE_SYSTEM_NAME}")
 message(STATUS "Detected architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 message(STATUS "CI Matrix name should be: '${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}'")
-
-# boost
-# TODO: boost build fails on Windows due to NASM errors during configure?
-# https://github.com/Orphis/boost-cmake/issues/42
-# https://github.com/libsdl-org/SDL/issues/10250
-if(BUILD_ALL OR BUILD_ALL_LIBDISPLAYDEVICE OR BUILD_ALL_SUNSHINE OR BUILD_BOOST)
-    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/boost/_main.cmake)
-endif()
 
 # FFmpeg
 if(BUILD_ALL OR BUILD_ALL_SUNSHINE OR BUILD_FFMPEG)

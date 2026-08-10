@@ -22,14 +22,18 @@ fi
 
 cmake -S . -B build \
   -DBUILD_DOCS=OFF \
+  -DCMAKE_PREFIX_PATH="$(brew --prefix qtbase);$(brew --prefix qtsvg)" \
+  -DQt6Svg_DIR="$(brew --prefix qtsvg)/lib/cmake/Qt6Svg" \
   -DLUMINA_ENABLE_STREAM_PERF_LOGGING="$lumina_perf_logging"
 npm run build-clean
-cmake --build build --target sunshine --parallel 4
+cmake --build build --target sunshine vd_helper --parallel 4
 
 INSTALL_DIR="$HOME/.local/share/lumina"
 mkdir -p "$INSTALL_DIR/assets/web"
 cp -f build/lumina "$INSTALL_DIR/lumina"
-cp -Rf build/assets/web/. "$INSTALL_DIR/assets/web/"
+cp -f build/vd_helper "$INSTALL_DIR/vd_helper"
+cp -f hid_entitlements.plist "$INSTALL_DIR/hid_entitlements.plist"
+cp -Rf build/assets/. "$INSTALL_DIR/assets/"
 
 codesign --sign - --entitlements "$INSTALL_DIR/hid_entitlements.plist" --force "$INSTALL_DIR/lumina"
 codesign --sign - --force "$INSTALL_DIR/vd_helper"

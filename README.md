@@ -60,10 +60,13 @@ Upstream Sunshine has significant issues on macOS:
 ## Quick Install
 
 ```bash
-git clone https://github.com/jayl-dev/Lumina.git
+git clone --recurse-submodules https://github.com/jayl-dev/Lumina.git
 cd Lumina
 ./install.sh
 ```
+
+> [!NOTE]
+> If you already cloned the repository without `--recurse-submodules`, run `git submodule update --init --recursive` inside the directory before running the install script.
 
 To copy an existing Sunshine configuration, including Web UI credentials,
 certificates, applications, and Moonlight pairings, use:
@@ -90,6 +93,7 @@ The install script handles everything:
    - `node` — web UI build (Vue 3 + Vite)
    - `icu4c@78` — Unicode support (Boost.Locale dependency)
    - `miniupnpc` — UPnP port mapping for NAT traversal
+   - `qtbase` / `qtsvg` — cross-platform system tray runtime
 4. Detects the correct macOS SDK path and C++ header location
 5. Configures cmake with all necessary flags (see [macOS Build Fixes](#macos-build-fixes) for why this is needed)
 6. Builds from source with all CPU cores
@@ -119,12 +123,14 @@ Or if `~/.local/bin` isn't in your PATH:
 
 ### Running the Command-Line ZIP
 
-The macOS ZIP distribution is intentionally unsigned and contains `bin/lumina`,
-`bin/vd_helper`, the assets, and `hid_entitlements.plist`. It can be used
-without changing macOS security settings: streaming, the admin web UI, audio,
-keyboard, mouse, and virtual-display features continue to work. Virtual HID
-gamepad emulation is the only feature that requires the optional security
-configuration in [Gamepad Setup](#gamepad-setup-optional).
+The macOS ZIP distribution contains `bin/lumina`, `bin/vd_helper`, the assets,
+the Qt tray runtime, and `hid_entitlements.plist`. Its relocatable runtime is
+ad-hoc signed without the restricted HID entitlement; it is not Developer ID
+signed or notarized. It can be used without changing macOS security settings:
+streaming, the admin web UI, audio, keyboard, mouse, and virtual-display
+features continue to work. Virtual HID gamepad emulation is the only feature
+that requires the optional local re-signing and security configuration in
+[Gamepad Setup](#gamepad-setup-optional).
 
 If Gatekeeper has added a quarantine attribute to the extracted archive, remove
 it from the extracted directory before launching:
@@ -165,6 +171,9 @@ Config files live in `~/.config/lumina/`:
 | `apps.json` | Applications visible in Moonlight's app list |
 | `credentials/` | TLS certificates for HTTPS and client pairing (auto-generated) |
 
+At startup, Lumina rotates `sunshine.log` and retains up to five previous logs
+as `sunshine.log.1` through `sunshine.log.5`.
+
 ### Key Settings (sunshine.conf)
 
 ```ini
@@ -177,9 +186,17 @@ max_bitrate = 80000
 # Virtual display — disabled by default
 virtual_display = disabled
 
+# Optional packet-size cap for low-MTU links; 0 disables the cap
+packetsize = 0
+
 # UPnP port mapping for remote access
 upnp = enabled
 ```
+
+`packetsize` can lower a Moonlight client's requested video packet size to avoid
+fragmentation over a VPN or other low-MTU path. Valid values are `0` (disabled)
+or `200` through `65535`; values above `1456` may require jumbo frames. A useful
+starting point is the path's maximum UDP payload minus 16 bytes.
 
 ### Streaming Performance Diagnostics
 
@@ -283,7 +300,7 @@ That's it. The gamepad will now appear in any application as a generic USB contr
 - **The `lumina` launcher auto-signs on every launch** — the manual step above is only needed if you bypass the launcher
 - **To re-enable AMFI later:** boot into Recovery Mode and run `nvram -d boot-args`
 - **Without AMFI disabled, Lumina still works fully** — you just won't have gamepad support. Keyboard, mouse, virtual displays, audio, and all other features work normally.
-- **Without signing the ZIP binaries, Lumina still launches normally** when macOS permits unsigned execution; only virtual HID gamepad emulation is unavailable. If Gatekeeper blocks launch, remove the quarantine attribute as shown above.
+- **The ZIP does not contain the restricted HID entitlement.** Lumina still launches normally after any quarantine is removed; only virtual HID gamepad emulation is unavailable until you locally re-sign it as shown above.
 - **Security note:** Disabling AMFI reduces one layer of macOS security. Only do this if you understand the implications and need gamepad support.
 
 ---
@@ -299,13 +316,14 @@ If you want to build manually instead of using `install.sh`:
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
 # Install all build dependencies
-brew install cmake boost pkg-config openssl@3 opus llvm doxygen graphviz node icu4c@78 miniupnpc
+brew install cmake boost pkg-config openssl@3 opus llvm doxygen graphviz node icu4c@78 miniupnpc qtbase qtsvg
 ```
 
 ### Build
 
 ```bash
 cd Lumina
+git submodule update --init --recursive
 
 # Detect macOS SDK path
 SDK_PATH=$(xcrun --show-sdk-path)
@@ -319,6 +337,8 @@ cmake -DCMAKE_BUILD_TYPE=Release \
   -DSUNSHINE_ASSETS_DIR=sunshine/assets \
   -DSUNSHINE_BUILD_HOMEBREW=ON \
   -DSUNSHINE_ENABLE_TRAY=ON \
+  -DCMAKE_PREFIX_PATH="$(brew --prefix qtbase);$(brew --prefix qtsvg)" \
+  -DQt6Svg_DIR="$(brew --prefix qtsvg)/lib/cmake/Qt6Svg" \
   -DBOOST_USE_STATIC=OFF \
   -DCMAKE_OSX_SYSROOT="$SDK_PATH" \
   -DCMAKE_CXX_FLAGS="-nostdinc++ -cxx-isystem $SDK_PATH/usr/include/c++/v1 -std=gnu++2b -I$(brew --prefix openssl@3)/include" \

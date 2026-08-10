@@ -528,6 +528,7 @@ namespace config {
 
     ENCRYPTION_MODE_NEVER,  // lan_encryption_mode
     ENCRYPTION_MODE_OPPORTUNISTIC,  // wan_encryption_mode
+    0,  // packetsize
   };
 
   nvhttp_t nvhttp {
@@ -561,6 +562,7 @@ namespace config {
     true,  // ds5_inputtino_randomize_mac
 
     true,  // keyboard enabled
+    false,  // right Alt to Windows key remapping disabled
     true,  // mouse enabled
     true,  // controller enabled
     true,  // always send scancodes
@@ -1235,6 +1237,7 @@ namespace config {
 
     int_between_f(vars, "lan_encryption_mode", stream.lan_encryption_mode, {0, 2});
     int_between_f(vars, "wan_encryption_mode", stream.wan_encryption_mode, {0, 2});
+    int_between_f(vars, "packetsize", stream.packetsize, {0, PACKETSIZE_MAX});
 
     path_f(vars, "file_apps", stream.file_apps);
 #ifndef __ANDROID__
@@ -1255,10 +1258,10 @@ namespace config {
 
     // This config option will only be used by the UI
     // When editing in the config file itself, use "keybindings"
-    bool map_rightalt_to_win = false;
-    bool_f(vars, "key_rightalt_to_key_win", map_rightalt_to_win);
+    input.key_rightalt_to_key_win = false;
+    bool_f(vars, "key_rightalt_to_key_win", input.key_rightalt_to_key_win);
 
-    if (map_rightalt_to_win) {
+    if (input.key_rightalt_to_key_win) {
       input.keybindings.emplace(0xA5, 0x5B);
     }
 
@@ -1526,9 +1529,6 @@ namespace config {
         // Wait for the UI to be ready for connections
         service_ctrl::wait_for_ui_ready();
       }
-
-      // Launch the web UI
-      launch_ui();
 
       // Always return 1 to ensure Sunshine doesn't start normally
       return 1;

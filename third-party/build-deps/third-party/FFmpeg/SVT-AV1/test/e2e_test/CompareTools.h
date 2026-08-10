@@ -22,6 +22,8 @@
 #ifndef _COMPARE_TOOLS_H_
 #define _COMPARE_TOOLS_H_
 
+#include "gtest/gtest.h"
+#include <sstream>
 #include <stdint.h>
 #include <math.h>
 #include <float.h>
@@ -33,18 +35,20 @@ static inline bool compare_image(const VideoFrame *recon,
                                  const VideoFrame *ref_frame) {
     if (recon->disp_width != ref_frame->disp_width ||
         recon->disp_height != ref_frame->disp_height) {
-        printf("compare failed for width(%u--%u) or height(%u--%u) different\n",
-               recon->disp_width,
-               ref_frame->disp_width,
-               recon->disp_height,
-               ref_frame->disp_height);
+        SCOPED_TRACE((std::stringstream()
+                      << "compare failed for width(" << recon->disp_width
+                      << "--" << ref_frame->disp_width << ") or height("
+                      << recon->disp_height << "--" << ref_frame->disp_height
+                      << ") different\n")
+                         .str());
         return false;
     }
 
     if (recon->format != ref_frame->format) {
-        printf("compare failed for format(%u--%u) different\n",
-               recon->format,
-               ref_frame->format);
+        SCOPED_TRACE((std::stringstream()
+                      << "compare failed for format(" << recon->format << "--"
+                      << ref_frame->format << ") different\n")
+                         .str());
         return false;
     }
 
@@ -78,7 +82,10 @@ static inline bool compare_image(const VideoFrame *recon,
                                          ? d[r]
                                          : (((uint16_t *)d)[r] & 0x3FF);
             if (s_pixel != d_pixel) {
-                printf("pixel index(%u--%u) luma compare failed!\n", l, r);
+                SCOPED_TRACE((std::stringstream()
+                              << "pixel index(" << l << "--" << r
+                              << ") luma compare failed!\n")
+                                 .str());
                 return false;
             }
         }
@@ -96,7 +103,10 @@ static inline bool compare_image(const VideoFrame *recon,
                                          ? d[r]
                                          : (((uint16_t *)d)[r] & 0x3FF);
             if (s_pixel != d_pixel) {
-                printf("pixel index(%u--%u) cb compare failed!\n", l, r);
+                SCOPED_TRACE((std::stringstream()
+                              << "pixel index(" << l << "--" << r
+                              << ") cb compare failed!\n")
+                                 .str());
                 return false;
             }
         }
@@ -114,7 +124,10 @@ static inline bool compare_image(const VideoFrame *recon,
                                          ? d[r]
                                          : (((uint16_t *)d)[r] & 0x3FF);
             if (s_pixel != d_pixel) {
-                printf("pixel index(%u--%u) cr compare failed!\n", l, r);
+                SCOPED_TRACE((std::stringstream()
+                              << "pixel index(" << l << "--" << r
+                              << ") cr compare failed!\n")
+                                 .str());
                 return false;
             }
         }
@@ -230,9 +243,6 @@ static inline void psnr_frame(const EbSvtIOFormat *src_frame,
                               const uint32_t src_bit_depth,
                               const VideoFrame &frame, double &luma_psnr,
                               double &cb_psnr, double &cr_psnr) {
-    bool half_width = true;
-    bool half_height = true;
-
     if (src_bit_depth == 8) {
         if (frame.bits_per_sample == 8) {
             luma_psnr = psnr_8bit(src_frame->luma,
@@ -245,14 +255,14 @@ static inline void psnr_frame(const EbSvtIOFormat *src_frame,
                                 src_frame->cb_stride,
                                 frame.planes[1],
                                 frame.stride[1],
-                                half_width ? frame.width >> 1 : frame.width,
-                                half_height ? frame.height >> 1 : frame.height);
+                                frame.width >> 1,
+                                frame.height >> 1);
             cr_psnr = psnr_8bit(src_frame->cr,
                                 src_frame->cr_stride,
                                 frame.planes[2],
                                 frame.stride[2],
-                                half_width ? frame.width >> 1 : frame.width,
-                                half_height ? frame.height >> 1 : frame.height);
+                                frame.width >> 1,
+                                frame.height >> 1);
         } else {
             luma_psnr = psnr_8bit_10bit(src_frame->luma,
                                         src_frame->y_stride,
@@ -260,20 +270,18 @@ static inline void psnr_frame(const EbSvtIOFormat *src_frame,
                                         frame.stride[0],
                                         frame.width,
                                         frame.height);
-            cb_psnr =
-                psnr_8bit_10bit(src_frame->cb,
-                                src_frame->cb_stride,
-                                (uint16_t *)frame.planes[1],
-                                frame.stride[1],
-                                half_width ? frame.width >> 1 : frame.width,
-                                half_height ? frame.height >> 1 : frame.height);
-            cr_psnr =
-                psnr_8bit_10bit(src_frame->cr,
-                                src_frame->cr_stride,
-                                (uint16_t *)frame.planes[2],
-                                frame.stride[2],
-                                half_width ? frame.width >> 1 : frame.width,
-                                half_height ? frame.height >> 1 : frame.height);
+            cb_psnr = psnr_8bit_10bit(src_frame->cb,
+                                      src_frame->cb_stride,
+                                      (uint16_t *)frame.planes[1],
+                                      frame.stride[1],
+                                      frame.width >> 1,
+                                      frame.height >> 1);
+            cr_psnr = psnr_8bit_10bit(src_frame->cr,
+                                      src_frame->cr_stride,
+                                      (uint16_t *)frame.planes[2],
+                                      frame.stride[2],
+                                      frame.width >> 1,
+                                      frame.height >> 1);
         }
     }
     if (src_bit_depth == 10) {
@@ -284,20 +292,18 @@ static inline void psnr_frame(const EbSvtIOFormat *src_frame,
                                         src_frame->y_stride,
                                         frame.width,
                                         frame.height);
-            cb_psnr =
-                psnr_8bit_10bit(frame.planes[1],
-                                frame.stride[1],
-                                (uint16_t *)src_frame->cb,
-                                src_frame->cb_stride,
-                                half_width ? frame.width >> 1 : frame.width,
-                                half_height ? frame.height >> 1 : frame.height);
-            cr_psnr =
-                psnr_8bit_10bit(frame.planes[2],
-                                frame.stride[2],
-                                (uint16_t *)src_frame->cr,
-                                src_frame->cr_stride,
-                                half_width ? frame.width >> 1 : frame.width,
-                                half_height ? frame.height >> 1 : frame.height);
+            cb_psnr = psnr_8bit_10bit(frame.planes[1],
+                                      frame.stride[1],
+                                      (uint16_t *)src_frame->cb,
+                                      src_frame->cb_stride,
+                                      frame.width >> 1,
+                                      frame.height >> 1);
+            cr_psnr = psnr_8bit_10bit(frame.planes[2],
+                                      frame.stride[2],
+                                      (uint16_t *)src_frame->cr,
+                                      src_frame->cr_stride,
+                                      frame.width >> 1,
+                                      frame.height >> 1);
         } else {
             luma_psnr = psnr_10bit((const uint16_t *)src_frame->luma,
                                    src_frame->y_stride,
@@ -305,20 +311,18 @@ static inline void psnr_frame(const EbSvtIOFormat *src_frame,
                                    frame.stride[0] / 2,
                                    frame.width,
                                    frame.height);
-            cb_psnr =
-                psnr_10bit((const uint16_t *)src_frame->cb,
-                           src_frame->cb_stride,
-                           (const uint16_t *)frame.planes[1],
-                           frame.stride[1] / 2,
-                           half_width ? frame.width >> 1 : frame.width,
-                           half_height ? frame.height >> 1 : frame.height);
-            cr_psnr =
-                psnr_10bit((const uint16_t *)src_frame->cr,
-                           src_frame->cr_stride,
-                           (const uint16_t *)frame.planes[2],
-                           frame.stride[2] / 2,
-                           half_width ? frame.width >> 1 : frame.width,
-                           half_height ? frame.height >> 1 : frame.height);
+            cb_psnr = psnr_10bit((const uint16_t *)src_frame->cb,
+                                 src_frame->cb_stride,
+                                 (const uint16_t *)frame.planes[1],
+                                 frame.stride[1] / 2,
+                                 frame.width >> 1,
+                                 frame.height >> 1);
+            cr_psnr = psnr_10bit((const uint16_t *)src_frame->cr,
+                                 src_frame->cr_stride,
+                                 (const uint16_t *)frame.planes[2],
+                                 frame.stride[2] / 2,
+                                 frame.width >> 1,
+                                 frame.height >> 1);
         }
     }
 }

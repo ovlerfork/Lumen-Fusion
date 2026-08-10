@@ -94,7 +94,9 @@
   for CMAKE_BUILD_TYPE in Debug Release; do
     test -e "./Bin/$CMAKE_BUILD_TYPE/SvtAv1EncApp" || continue
     ./Bin/$CMAKE_BUILD_TYPE/SvtAv1EncApp --preset 2 -i "$SVT_ENCTEST_FILENAME" -n 17 -b "test-${BRANCH:-pr}-$(uname -sm | tr ' ' _)-${CMAKE_BUILD_TYPE}-${SVT_ENCTEST_BITNESS}bit-m2.ivf"
+    ./Bin/$CMAKE_BUILD_TYPE/SvtAv1EncApp --preset 2 --tune 5 -i "$SVT_ENCTEST_FILENAME" -n 17 -b "test-${BRANCH:-pr}-$(uname -sm | tr ' ' _)-${CMAKE_BUILD_TYPE}-${SVT_ENCTEST_BITNESS}bit-m2-tune5.ivf"
     ./Bin/$CMAKE_BUILD_TYPE/SvtAv1EncApp --preset 8 -i "$SVT_ENCTEST_FILENAME" -n 120 -b "test-${BRANCH:-pr}-$(uname -sm | tr ' ' _)-${CMAKE_BUILD_TYPE}-${SVT_ENCTEST_BITNESS}bit-m8.ivf"
+    ./Bin/$CMAKE_BUILD_TYPE/SvtAv1EncApp --preset 8 --tune 5 -i "$SVT_ENCTEST_FILENAME" -n 120 -b "test-${BRANCH:-pr}-$(uname -sm | tr ' ' _)-${CMAKE_BUILD_TYPE}-${SVT_ENCTEST_BITNESS}bit-m8-tune5.ivf"
   done
 
 .enc-ext-test-script: |
@@ -126,14 +128,6 @@
   - git clone https://github.com/Netflix/vmaf.git vmaf-src &
   - git clone https://github.com/FFmpeg/FFmpeg.git ffmpeg-src &
   - time wait
-
-.ffmpeg-before-script-clone-windows:
-  - time git clone $PWD svtav1-src
-  - time git clone https://aomedia.googlesource.com/aom aom-src
-  - time git clone https://chromium.googlesource.com/webm/libvpx libvpx-src
-  - time git clone https://code.videolan.org/videolan/dav1d.git dav1d-src
-  - time git clone https://github.com/Netflix/vmaf.git vmaf-src
-  - time git clone https://github.com/FFmpeg/FFmpeg.git ffmpeg-src
 
 .ffmpeg-before-script-export:
   - true "${CMAKE_BUILD_TYPE:=Release}" "${BUILD_SHARED_LIBS:=OFF}" "${PREFIX_DIR:=/usr/local}"
@@ -224,7 +218,6 @@
   - mkdir ffmpeg-build
   - cd ffmpeg-build
   - time dash ../ffmpeg-src/configure
-    --arch=x86_64
     --pkg-config-flags="--static"
     --cc="${CC:-ccache gcc}"
     --cxx="${CXX:-ccache g++}"

@@ -84,9 +84,11 @@ set(all_files
         coding_loop.h
         coding_unit.c
         coding_unit.h
+        coefficients.c
         coefficients.h
         common_dsp_rtcd.c
         common_dsp_rtcd.h
+        common_utils.c
         common_utils.h
         compute_mean.h
         compute_sad.h
@@ -103,8 +105,6 @@ set(all_files
         definitions.h
         dlf_process.c
         dlf_process.h
-        dwt.c
-        dwt.h
         enc_cdef.c
         enc_cdef.h
         enc_dec_process.c
@@ -231,16 +231,23 @@ set(all_files
         pred_structure.c
         pred_structure.h
         product_coding_loop.c
+        ac_bias.c
+        ac_bias.h
         q_matrices.h
         random.h
         ransac.c
         ransac.h
+        rc_aq.c
+        rc_crf_cqp.c
         rc_process.c
         rc_process.h
         rc_results.c
         rc_results.h
+        rc_rtc_cbr.c
+        rc_tables.h
         rc_tasks.c
         rc_tasks.h
+        rc_vbr_cbr.c
         rd_cost.c
         rd_cost.h
         reference_object.c
@@ -271,6 +278,7 @@ set(all_files
         svt_log.h
         svt_malloc.c
         svt_malloc.h
+        svt_nvtx.h
         svt_psnr.c
         svt_psnr.h
         svt_threads.c
@@ -279,6 +287,8 @@ set(all_files
         svt_time.h
         sys_resource_manager.c
         sys_resource_manager.h
+        kernel_dispatch.c
+        kernel_dispatch.h
         temporal_filtering.c
         temporal_filtering.h
         transforms.c
@@ -292,3 +302,27 @@ set(all_files
         )
 
 add_library(CODEC OBJECT ${all_files})
+
+if(SVT_AV1_NVTX)
+    # HPC SDK installs CUDA under a versioned subdir (e.g. 25.3/cuda/include);
+    # find_path HINTS does not expand `*` itself, so glob the candidates first.
+    file(GLOB SVT_NVTX_HPC_HINTS
+        "/opt/nvidia/hpc_sdk/Linux_aarch64/*/cuda/include"
+        "/opt/nvidia/hpc_sdk/Linux_x86_64/*/cuda/include")
+    find_path(NVTX3_INCLUDE_DIR nvtx3/nvToolsExt.h
+        HINTS $ENV{CUDA_HOME}/include
+              $ENV{NVHPC_ROOT}/cuda/include
+              ${SVT_NVTX_HPC_HINTS}
+              /usr/local/cuda/include
+              /usr/include)
+    if(NOT NVTX3_INCLUDE_DIR)
+        message(FATAL_ERROR "SVT_AV1_NVTX=ON but nvtx3/nvToolsExt.h not found. Install CUDA Toolkit or NVIDIA HPC SDK, or set CUDA_HOME / NVHPC_ROOT.")
+    endif()
+    target_include_directories(CODEC PRIVATE ${NVTX3_INCLUDE_DIR})
+    target_compile_definitions(CODEC PRIVATE SVT_AV1_NVTX=1)
+    # NVTX3 is header-only; the implementation is dlopen'd lazily, so we need libdl.
+    target_link_libraries(CODEC PRIVATE ${CMAKE_DL_LIBS})
+else()
+    # Always define SVT_AV1_NVTX so `#if SVT_AV1_NVTX` is well-formed under -Wundef.
+    target_compile_definitions(CODEC PRIVATE SVT_AV1_NVTX=0)
+endif()

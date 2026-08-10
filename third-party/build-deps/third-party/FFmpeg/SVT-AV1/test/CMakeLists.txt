@@ -87,12 +87,16 @@ set(multi_arch_files
     CdefTest.cc
     CompoundUtilTest.cc
     Convolve8Test.cc
+    Convolve2dSrPerfTest.cc
     DeblockTest.cc
     EncodeTxbAsmTest.cc
     FilterIntraPredTest.cc
+    FullDistortionPerfTest.cc
     FwdTxfm2dAsmTest.cc
+    HashTest.cc
     HbdVarianceTest.cc
     InvTxfm2dAsmTest.cc
+    MemTest.cc
     OBMCSadTest.cc
     OBMCVarianceTest.cc
     PackUnPackTest.cc
@@ -105,8 +109,11 @@ set(multi_arch_files
     SatdTest.cc
     SelfGuidedUtilTest.cc
     SpatialFullDistortionTest.cc
+    SubpelVariancePerfTest.cc
     TemporalFilterTestPlanewise.cc
+    VariancePerfTest.cc
     VarianceTest.cc
+    VmafTest.cc
     WedgeUtilTest.cc
     av1_convolve_scale_test.cc
     compute_mean_test.cc
@@ -137,12 +144,12 @@ if(HAVE_X86_PLATFORM)
       FwdTxfm2dTest.cc
       MotionEstimationTest.cc
       PsnrTest.cc
-      dwt_test.cc
       frame_error_test.cc)
 endif()
 
 if(HAVE_ARM_PLATFORM)
-  set(arm_arch_files)
+  set(arm_arch_files
+      sad_neon_test.cc)
 endif()
 
 set(arch_neutral_lib_list
@@ -166,6 +173,9 @@ endif()
 
 if(HAVE_ARM_PLATFORM)
   set(arm_arch_lib_list $<TARGET_OBJECTS:ASM_NEON>)
+  if(ENABLE_ARM_CRC32)
+    list(APPEND arm_arch_lib_list $<TARGET_OBJECTS:ASM_ARM_CRC32>)
+  endif()
   if(ENABLE_NEON_DOTPROD)
     list(APPEND arm_arch_lib_list $<TARGET_OBJECTS:ASM_NEON_DOTPROD>)
   endif()
@@ -199,7 +209,7 @@ add_dependencies(SvtAv1UnitTests SvtAv1Enc)
 
 install(TARGETS SvtAv1UnitTests RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
-add_test(SvtAv1UnitTests ${CMAKE_OUTPUT_DIRECTORY}/SvtAv1UnitTests)
+add_test(NAME SvtAv1UnitTests COMMAND SvtAv1UnitTests)
 
 add_subdirectory(api_test)
 add_subdirectory(e2e_test)

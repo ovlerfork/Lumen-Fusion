@@ -12,7 +12,7 @@
 
 #include "gtest/gtest.h"
 #include "aom_dsp_rtcd.h"
-#include "definitions.h"
+#include "common_utils.h"
 #include "restoration.h"
 #include "unit_test_utility.h"
 #include "util.h"
@@ -100,15 +100,16 @@ class av1_compute_stats_test
     }
 
   public:
+    av1_compute_stats_test() = default;
     void match_test() {
         const int block_size = TEST_GET_PARAM(0);
         int width;
         int height;
-        if (block_size < BlockSizeS_ALL) {
+        if (block_size < BLOCK_SIZES_ALL) {
             width = block_size_wide[block_size];
             height = block_size_high[block_size];
         } else {
-            if (block_size == BlockSizeS_ALL) {
+            if (block_size == BLOCK_SIZES_ALL) {
                 width = 308;
                 height = 308;
             } else {
@@ -265,20 +266,21 @@ TEST_P(av1_compute_stats_test, DISABLED_speed) {
 
 INSTANTIATE_TEST_SUITE_P(
     AVX2, av1_compute_stats_test,
-    ::testing::Combine(
-        ::testing::Range(BLOCK_4X4, (BlockSize)(BlockSizeS_ALL + 2)),
-        ::testing::Values(svt_av1_compute_stats_sse4_1,
-                          svt_av1_compute_stats_avx2),
-        ::testing::Range(0, 6),
-        ::testing::Values(WIENER_WIN_CHROMA, WIENER_WIN, WIENER_WIN_3TAP)));
+    ::testing::Combine(::testing::Range(BLOCK_4X4,
+                                        (BlockSize)(BLOCK_SIZES_ALL + 2)),
+                       ::testing::Values(svt_av1_compute_stats_sse4_1,
+                                         svt_av1_compute_stats_avx2),
+                       ::testing::Range(0, 6),
+                       ::testing::Values(WIENER_WIN_CHROMA, WIENER_WIN)));
 
 #if EN_AVX512_SUPPORT
 INSTANTIATE_TEST_SUITE_P(
     AVX512, av1_compute_stats_test,
-    ::testing::Combine(
-        ::testing::Range(BLOCK_4X4, (BlockSize)(BlockSizeS_ALL + 2)),
-        ::testing::Values(svt_av1_compute_stats_avx512), ::testing::Range(0, 6),
-        ::testing::Values(WIENER_WIN_CHROMA, WIENER_WIN, WIENER_WIN_3TAP)));
+    ::testing::Combine(::testing::Range(BLOCK_4X4,
+                                        (BlockSize)(BLOCK_SIZES_ALL + 2)),
+                       ::testing::Values(svt_av1_compute_stats_avx512),
+                       ::testing::Range(0, 6),
+                       ::testing::Values(WIENER_WIN_CHROMA, WIENER_WIN)));
 #endif
 
 #endif  // ARCH_X86_64
@@ -286,20 +288,24 @@ INSTANTIATE_TEST_SUITE_P(
 #if ARCH_AARCH64
 INSTANTIATE_TEST_SUITE_P(
     NEON, av1_compute_stats_test,
-    ::testing::Combine(
-        ::testing::Range(BLOCK_4X4, (BlockSize)(BlockSizeS_ALL + 2)),
-        ::testing::Values(svt_av1_compute_stats_neon), ::testing::Range(0, 6),
-        ::testing::Values(WIENER_WIN_CHROMA, WIENER_WIN, WIENER_WIN_3TAP)));
+    ::testing::Combine(::testing::Range(BLOCK_4X4,
+                                        (BlockSize)(BLOCK_SIZES_ALL + 2)),
+                       ::testing::Values(svt_av1_compute_stats_neon),
+                       ::testing::Range(0, 6),
+                       ::testing::Values(WIENER_WIN_CHROMA, WIENER_WIN)));
 
 #if HAVE_SVE
 INSTANTIATE_TEST_SUITE_P(
     SVE, av1_compute_stats_test,
-    ::testing::Combine(
-        ::testing::Range(BLOCK_4X4, (BlockSize)(BlockSizeS_ALL + 2)),
-        ::testing::Values(svt_av1_compute_stats_sve), ::testing::Range(0, 6),
-        ::testing::Values(WIENER_WIN_CHROMA, WIENER_WIN, WIENER_WIN_3TAP)));
+    ::testing::Combine(::testing::Range(BLOCK_4X4,
+                                        (BlockSize)(BLOCK_SIZES_ALL + 2)),
+                       ::testing::Values(svt_av1_compute_stats_sve),
+                       ::testing::Range(0, 6),
+                       ::testing::Values(WIENER_WIN_CHROMA, WIENER_WIN)));
 #endif  // HAVE_SVE
 #endif  // ARCH_AARCH64
+
+#if CONFIG_ENABLE_HIGH_BIT_DEPTH
 
 typedef ::testing::tuple<BlockSize, av1_compute_stats_highbd_func, int, int,
                          EbBitDepth>
@@ -383,15 +389,16 @@ class av1_compute_stats_test_hbd
     }
 
   public:
+    av1_compute_stats_test_hbd() = default;
     void highbd_match_test() {
         const int block_size = TEST_GET_PARAM(0);
         int width;
         int height;
-        if (block_size < BlockSizeS_ALL) {
+        if (block_size < BLOCK_SIZES_ALL) {
             width = block_size_wide[block_size];
             height = block_size_high[block_size];
         } else {
-            if (block_size == BlockSizeS_ALL) {
+            if (block_size == BLOCK_SIZES_ALL) {
                 width = 308;
                 height = 308;
             } else {
@@ -567,29 +574,29 @@ TEST_P(av1_compute_stats_test_hbd, DISABLED_speed) {
 INSTANTIATE_TEST_SUITE_P(
     SSE4_1, av1_compute_stats_test_hbd,
     ::testing::Combine(
-        ::testing::Range(BLOCK_4X4, (BlockSize)(BlockSizeS_ALL + 2)),
+        ::testing::Range(BLOCK_4X4, (BlockSize)(BLOCK_SIZES_ALL + 2)),
         ::testing::Values(svt_av1_compute_stats_highbd_sse4_1),
         ::testing::Range(0, 8),
-        ::testing::Values(WIENER_WIN_CHROMA, WIENER_WIN, WIENER_WIN_3TAP),
+        ::testing::Values(WIENER_WIN_CHROMA, WIENER_WIN),
         ::testing::Values(EB_EIGHT_BIT, EB_TEN_BIT, EB_TWELVE_BIT)));
 
 INSTANTIATE_TEST_SUITE_P(
     AVX2, av1_compute_stats_test_hbd,
     ::testing::Combine(
-        ::testing::Range(BLOCK_4X4, (BlockSize)(BlockSizeS_ALL + 2)),
+        ::testing::Range(BLOCK_4X4, (BlockSize)(BLOCK_SIZES_ALL + 2)),
         ::testing::Values(svt_av1_compute_stats_highbd_avx2),
         ::testing::Range(0, 8),
-        ::testing::Values(WIENER_WIN_CHROMA, WIENER_WIN, WIENER_WIN_3TAP),
+        ::testing::Values(WIENER_WIN_CHROMA, WIENER_WIN),
         ::testing::Values(EB_EIGHT_BIT, EB_TEN_BIT, EB_TWELVE_BIT)));
 
 #if EN_AVX512_SUPPORT
 INSTANTIATE_TEST_SUITE_P(
     AVX512, av1_compute_stats_test_hbd,
     ::testing::Combine(
-        ::testing::Range(BLOCK_4X4, (BlockSize)(BlockSizeS_ALL + 2)),
+        ::testing::Range(BLOCK_4X4, (BlockSize)(BLOCK_SIZES_ALL + 2)),
         ::testing::Values(svt_av1_compute_stats_highbd_avx512),
         ::testing::Range(0, 8),
-        ::testing::Values(WIENER_WIN_CHROMA, WIENER_WIN, WIENER_WIN_3TAP),
+        ::testing::Values(WIENER_WIN_CHROMA, WIENER_WIN),
         ::testing::Values(EB_EIGHT_BIT, EB_TEN_BIT, EB_TWELVE_BIT)));
 #endif
 
@@ -600,21 +607,23 @@ INSTANTIATE_TEST_SUITE_P(
 INSTANTIATE_TEST_SUITE_P(
     NEON, av1_compute_stats_test_hbd,
     ::testing::Combine(
-        ::testing::Range(BLOCK_4X4, (BlockSize)(BlockSizeS_ALL + 2)),
+        ::testing::Range(BLOCK_4X4, (BlockSize)(BLOCK_SIZES_ALL + 2)),
         ::testing::Values(svt_av1_compute_stats_highbd_neon),
         ::testing::Range(0, 8),
-        ::testing::Values(WIENER_WIN_CHROMA, WIENER_WIN, WIENER_WIN_3TAP),
+        ::testing::Values(WIENER_WIN_CHROMA, WIENER_WIN),
         ::testing::Values(EB_EIGHT_BIT, EB_TEN_BIT, EB_TWELVE_BIT)));
 
 #if HAVE_SVE
 INSTANTIATE_TEST_SUITE_P(
     SVE, av1_compute_stats_test_hbd,
     ::testing::Combine(
-        ::testing::Range(BLOCK_4X4, (BlockSize)(BlockSizeS_ALL + 2)),
+        ::testing::Range(BLOCK_4X4, (BlockSize)(BLOCK_SIZES_ALL + 2)),
         ::testing::Values(svt_av1_compute_stats_highbd_sve),
         ::testing::Range(0, 8),
-        ::testing::Values(WIENER_WIN_CHROMA, WIENER_WIN, WIENER_WIN_3TAP),
+        ::testing::Values(WIENER_WIN_CHROMA, WIENER_WIN),
         ::testing::Values(EB_EIGHT_BIT, EB_TEN_BIT, EB_TWELVE_BIT)));
 
 #endif  // HAVE_SVE
 #endif  // ARCH_AARCH64
+
+#endif  // CONFIG_ENABLE_HIGH_BIT_DEPTH

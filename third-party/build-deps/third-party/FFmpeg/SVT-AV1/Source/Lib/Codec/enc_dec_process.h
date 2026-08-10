@@ -32,22 +32,22 @@ extern "C" {
      * Enc Dec Context
      **************************************/
 typedef struct EncDecContext {
-    EbFifo              *mode_decision_input_fifo_ptr;
-    EbFifo              *enc_dec_output_fifo_ptr;
-    EbFifo              *enc_dec_feedback_fifo_ptr;
-    EbFifo              *picture_demux_output_fifo_ptr; // to picture-manager
-    ModeDecisionContext *md_ctx;
-    const BlockGeom     *blk_geom;
+    EbFifo*              mode_decision_input_fifo_ptr;
+    EbFifo*              enc_dec_output_fifo_ptr;
+    EbFifo*              enc_dec_feedback_fifo_ptr;
+    EbFifo*              picture_demux_output_fifo_ptr; // to picture-manager
+    ModeDecisionContext* md_ctx;
+    const BlockGeom*     blk_geom;
     // Coding Unit Workspace---------------------------
-    EbPictureBufferDesc *input_samples;
-    EbPictureBufferDesc *input_sample16bit_buffer;
+    EbPictureBufferDesc* input_samples;
+    EbPictureBufferDesc* input_sample16bit_buffer;
     // temporary buffers for decision making of LF (LPF_PICK_FROM_FULL_IMAGE).
     // Since recon switches between reconPtr and referencePtr, the temporary buffers sizes used the referencePtr's which has padding,...
     uint32_t pic_fast_lambda[2];
     uint32_t pic_full_lambda[2];
 
     //  Context Variables---------------------------------
-    BlkStruct *blk_ptr;
+    BlkStruct* blk_ptr;
     //const CodedBlockStats                *cu_stats;
     uint16_t blk_org_x; // within the picture
     uint16_t blk_org_y; // within the picture
@@ -58,10 +58,14 @@ typedef struct EncDecContext {
     uint64_t tot_intra_coded_area;
     uint64_t tot_skip_coded_area;
     uint64_t tot_hp_coded_area;
+    uint64_t tot_cnt_zero_mv;
+    uint64_t tot_total_rate;
     uint64_t three_quad_energy;
 
     uint16_t coded_area_sb;
     uint16_t coded_area_sb_uv;
+    uint16_t coded_area_sb_update;
+    uint16_t coded_area_sb_uv_update;
 
     uint8_t md_skip_blk;
 
@@ -73,10 +77,15 @@ typedef struct EncDecContext {
 /**************************************
  * Extern Function Declarations
  **************************************/
-extern EbErrorType svt_aom_enc_dec_context_ctor(EbThreadContext *thread_ctx, const EbEncHandle *enc_handle_ptr,
-                                                int index, int tasks_index);
+EbErrorType svt_aom_enc_dec_context_ctor(EbThreadContext* thread_ctx, const EbEncHandle* enc_handle_ptr, int index,
+                                         int tasks_index);
 
-extern void *svt_aom_mode_decision_kernel(void *input_ptr);
+void* svt_aom_mode_decision_kernel(void* input_ptr);
+
+// Computes the SSIM score from the five per-block integer sums (used by the C and
+// SIMD svt_ssim_* kernels).
+double svt_aom_similarity(uint32_t sum_s, uint32_t sum_r, uint32_t sum_sq_s, uint32_t sum_sq_r, uint32_t sum_sxr,
+                          int count, uint32_t bd);
 
 #ifdef __cplusplus
 }

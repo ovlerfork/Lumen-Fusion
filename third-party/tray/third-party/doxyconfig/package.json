@@ -1,8 +1,0 @@
-{
-  "dependencies": {
-    "@fortawesome/fontawesome-free": "7.0.1"
-  },
-  "devDependencies": {
-    "jquery": "^3.7.1"
-  }
-}

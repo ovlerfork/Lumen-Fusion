@@ -2,11 +2,14 @@
     <div class="card">
         <div class="card-body">
             <h2>{{ $t('resource_card.resources') }}</h2>
-            <p>{{ $t('resource_card.resources_desc') }}</p>
             <div class="d-flex flex-wrap gap-2 mt-4">
                 <a class="btn btn-success" href="https://github.com/jayl-dev/Lumina" target="_blank">
                   <SimpleIcon icon="GitHub" :size="18" class="icon"></SimpleIcon>
                   Lumina on GitHub
+                </a>
+                <a class="btn btn-info" href="https://github.com/jayl-dev/Lumina/tree/main/docs" target="_blank">
+                  <BookOpen :size="18" class="icon"></BookOpen>
+                  {{ $t('resource_card.documentation') }}
                 </a>
                 <a class="btn btn-secondary" href="https://github.com/jayl-dev/Lumina/issues" target="_blank">
                   <CircleHelp :size="18" class="icon"></CircleHelp>
@@ -39,15 +42,23 @@
 <script>
 import {
   AlertCircle,
+  BookOpen,
   CircleHelp,
   FileText,
-} from 'lucide-vue-next'
+} from '@lucide/vue'
 import SimpleIcon from './SimpleIcon.vue'
 
 export default {
+  props: {
+    installedVersionNotStable: {
+      type: Boolean,
+      default: false
+    }
+  },
   components: {
     SimpleIcon,
     AlertCircle,
+    BookOpen,
     CircleHelp,
     FileText,
   }

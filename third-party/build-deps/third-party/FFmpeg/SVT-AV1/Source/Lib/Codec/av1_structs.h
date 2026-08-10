@@ -95,6 +95,29 @@ typedef struct OrderHintInfo {
 
 } OrderHintInfo;
 
+typedef struct EbTimingInfo {
+    /*!< Timing info present flag */
+    bool timing_info_present;
+
+    /*!< Number of time units of a clock operating at the frequency time_scale
+     * Hz that corresponds to one increment of a clock tick counter*/
+    uint32_t num_units_in_display_tick;
+
+    /*!< Number of time units that pass in one second*/
+    uint32_t time_scale;
+
+    /*!< Equal to 1 indicates that pictures should be displayed according to
+     * their output order with the number of ticks between two consecutive
+     * pictures specified by num_ticks_per_picture.*/
+    uint8_t equal_picture_interval;
+
+    /*!< Specifies the number of clock ticks corresponding to output time
+     * between two consecutive pictures in the output order.
+     * Range - [0 to (1 << 32) - 2]*/
+    uint32_t num_ticks_per_picture;
+
+} EbTimingInfo;
+
 typedef struct SeqHeader {
     /*!< Specifies the features that can be used in the coded video sequence */
     EbAv1SeqProfile seq_profile;
@@ -317,17 +340,18 @@ typedef struct QuantizationParams {
     /*!< Indicates the base frame qindex */
     uint8_t base_q_idx;
     /*!< Indicates the DC quantizer relative to base_q_idx - applicable for non-RC configuration(s) only*/
-    int8_t delta_q_dc[MAX_MB_PLANE];
+    int8_t delta_q_dc[MAX_PLANES];
     /*!< Indicates the AC quantizer relative to base_q_idx - applicable for non-RC configuration(s) only*/
-    int8_t delta_q_ac[MAX_MB_PLANE];
+    int8_t delta_q_ac[MAX_PLANES];
     /*!<Specifies that the quantizer matrix will be used to compute quantizers*/
     uint8_t using_qmatrix;
     /*!< Specifies the level in the quantizer matrix that should be used for
      * each plane decoding */
-    uint8_t qm[MAX_MB_PLANE];
+    uint8_t qm[MAX_PLANES];
     /*!< qindex for every segment ID */
     uint8_t qindex[MAX_SEGMENTS];
 } QuantizationParams;
+
 typedef struct DeltaQParams {
     /*!< Specifies whether quantizer index delta values are present */
     uint8_t delta_q_present;
@@ -390,6 +414,7 @@ typedef struct SkipModeInfo {
     int ref_frame_idx_1;
 
 } SkipModeInfo;
+
 typedef struct GlobalMotionParams {
     /*!< Specifies the transform type */
     TransformationType gm_type;
@@ -541,13 +566,13 @@ typedef struct FrameHeader {
     uint8_t lossless_array[MAX_SEGMENTS];
 
     /*!< Loop Filter Parameters */
-    struct LoopFilter loop_filter_params;
+    LoopFilter loop_filter_params;
 
     /*!< Constrained Directional Enhancement Filter */
     CdefParams cdef_params;
 
     /*!< Loop Restoration Parameters */
-    LrParams lr_params[MAX_MB_PLANE];
+    LrParams lr_params[MAX_PLANES];
 
     /*!< Specifies how the transform size is determined */
     TxMode tx_mode;
@@ -576,7 +601,7 @@ typedef struct FrameHeader {
 } FrameHeader;
 
 typedef struct Dequant {
-    DECLARE_ALIGNED(16, int16_t, dequant_qtx[MAX_SEGMENTS][MAX_MB_PLANE][2]); // 0: DC, 1: AC
+    DECLARE_ALIGNED(16, int16_t, dequant_qtx[MAX_SEGMENTS][MAX_PLANES][2]); // 0: DC, 1: AC
 } Dequant;
 
 #ifdef __cplusplus

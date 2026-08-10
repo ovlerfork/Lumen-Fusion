@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <cmath>
 #include <algorithm>
+#include "aom/aom_codec.h"
 #include "aom/aom_decoder.h"
 #include "aom/aomdx.h"
 #include "aom/inspection.h"
@@ -34,17 +35,8 @@
 #pragma warning(disable : 4505)
 #endif
 
-/** from aom/common/blockd.h */
-typedef enum {
-    KEY_FRAME = 0,
-    INTER_FRAME = 1,
-    INTRA_ONLY_FRAME = 2,  // replaces intra-only
-    S_FRAME = 3,
-    FRAME_TYPES,
-} FRAME_TYPE;
-
 /** count intra period length from the frame serialization */
-static int get_max_intra_period_length(std::vector<int>& frame_type_vec) {
+static int get_max_intra_period_length(const std::vector<int>& frame_type_vec) {
     int period_max = 0;
     int period = 0;
     for (int frame_type : frame_type_vec) {
@@ -65,39 +57,9 @@ static int get_max_intra_period_length(std::vector<int>& frame_type_vec) {
     return period_max;
 }
 
-/** from aom/common/enums.h */
-typedef enum ATTRIBUTE_PACKED {
-    BLOCK_4X4,
-    BLOCK_4X8,
-    BLOCK_8X4,
-    BLOCK_8X8,
-    BLOCK_8X16,
-    BLOCK_16X8,
-    BLOCK_16X16,
-    BLOCK_16X32,
-    BLOCK_32X16,
-    BLOCK_32X32,
-    BLOCK_32X64,
-    BLOCK_64X32,
-    BLOCK_64X64,
-    BLOCK_64X128,
-    BLOCK_128X64,
-    BLOCK_128X128,
-    BLOCK_4X16,
-    BLOCK_16X4,
-    BLOCK_8X32,
-    BLOCK_32X8,
-    BLOCK_16X64,
-    BLOCK_64X16,
-    BLOCK_SIZES_ALL,
-    BLOCK_SIZES = BLOCK_4X16,
-    BLOCK_INVALID = 255,
-    BLOCK_LARGEST = (BLOCK_SIZES - 1)
-} BLOCK_SIZE;
-
 /** get the minimum block size from super block size type */
 static uint32_t get_min_block_size(const uint32_t sb_type) {
-    switch ((BLOCK_SIZE)sb_type) {
+    switch ((BlockSize)sb_type) {
     case BLOCK_4X4: return 4;
     case BLOCK_4X8:
     case BLOCK_8X4:
@@ -127,7 +89,7 @@ static uint32_t get_min_block_size(const uint32_t sb_type) {
 
 /** check the block type is a square or rectangle*/
 static bool is_ext_block(const uint32_t sb_type) {
-    switch ((BLOCK_SIZE)sb_type) {
+    switch ((BlockSize)sb_type) {
     case BLOCK_4X4:
     case BLOCK_8X8:
     case BLOCK_16X16:
@@ -138,78 +100,6 @@ static bool is_ext_block(const uint32_t sb_type) {
     }
     return true;
 }
-
-/** from aom/common/enums.h */
-// Note: All directional predictors must be between V_PRED and D67_PRED (both
-// inclusive).
-typedef enum ATTRIBUTE_PACKED {
-    DC_PRED,        // Average of above and left pixels
-    V_PRED,         // Vertical
-    H_PRED,         // Horizontal
-    D45_PRED,       // Directional 45  degree
-    D135_PRED,      // Directional 135 degree
-    D113_PRED,      // Directional 113 degree
-    D157_PRED,      // Directional 157 degree
-    D203_PRED,      // Directional 203 degree
-    D67_PRED,       // Directional 67  degree
-    SMOOTH_PRED,    // Combination of horizontal and vertical interpolation
-    SMOOTH_V_PRED,  // Vertical interpolation
-    SMOOTH_H_PRED,  // Horizontal interpolation
-    PAETH_PRED,     // Predict from the direction of smallest gradient
-    NEARESTMV,
-    NEARMV,
-    GLOBALMV,
-    NEWMV,
-    // Compound ref compound modes
-    NEAREST_NEARESTMV,
-    NEAR_NEARMV,
-    NEAREST_NEWMV,
-    NEW_NEARESTMV,
-    NEAR_NEWMV,
-    NEW_NEARMV,
-    GLOBAL_GLOBALMV,
-    NEW_NEWMV,
-    MB_MODE_COUNT,
-    INTRA_MODE_START = DC_PRED,
-    INTRA_MODE_END = NEARESTMV,
-    INTRA_MODE_NUM = INTRA_MODE_END - INTRA_MODE_START,
-    SINGLE_INTER_MODE_START = NEARESTMV,
-    SINGLE_INTER_MODE_END = NEAREST_NEARESTMV,
-    SINGLE_INTER_MODE_NUM = SINGLE_INTER_MODE_END - SINGLE_INTER_MODE_START,
-    COMP_INTER_MODE_START = NEAREST_NEARESTMV,
-    COMP_INTER_MODE_END = MB_MODE_COUNT,
-    COMP_INTER_MODE_NUM = COMP_INTER_MODE_END - COMP_INTER_MODE_START,
-    INTRA_MODES = PAETH_PRED + 1,  // PAETH_PRED has to be the last intra mode.
-    INTRA_INVALID = MB_MODE_COUNT  // For uv_mode in inter blocks
-} PredictionMode;
-
-// TODO(ltrudeau) Do we really want to pack this?
-// TODO(ltrudeau) Do we match with PredictionMode?
-typedef enum ATTRIBUTE_PACKED {
-    UV_DC_PRED,        // Average of above and left pixels
-    UV_V_PRED,         // Vertical
-    UV_H_PRED,         // Horizontal
-    UV_D45_PRED,       // Directional 45  degree
-    UV_D135_PRED,      // Directional 135 degree
-    UV_D113_PRED,      // Directional 113 degree
-    UV_D157_PRED,      // Directional 157 degree
-    UV_D203_PRED,      // Directional 203 degree
-    UV_D67_PRED,       // Directional 67  degree
-    UV_SMOOTH_PRED,    // Combination of horizontal and vertical interpolation
-    UV_SMOOTH_V_PRED,  // Vertical interpolation
-    UV_SMOOTH_H_PRED,  // Horizontal interpolation
-    UV_PAETH_PRED,     // Predict from the direction of smallest gradient
-    UV_CFL_PRED,       // Chroma-from-Luma
-    UV_INTRA_MODES,
-    UV_MODE_INVALID,  // For uv_mode in inter blocks
-} UvPredictionMode;
-
-typedef enum ATTRIBUTE_PACKED {
-    SIMPLE_TRANSLATION,
-    OBMC_CAUSAL,    // 2-sided OBMC
-    WARPED_CAUSAL,  // 2-sided WARPED
-    MOTION_MODES
-} MotionMode;
 
 using namespace svt_av1_e2e_tools;
 
@@ -224,11 +114,43 @@ RefDecoder* create_reference_decoder(bool enable_analyzer /* = false*/) {
     return decoder;
 }
 
+static VideoColorFormat trans_video_format(aom_img_fmt_t fmt) {
+    switch (fmt) {
+    case AOM_IMG_FMT_YV12: return IMG_FMT_YV12;
+    case AOM_IMG_FMT_I420: return IMG_FMT_I420;
+    case AOM_IMG_FMT_AOMYV12: return IMG_FMT_YV12_CUSTOM_COLOR_SPACE;
+    case AOM_IMG_FMT_AOMI420: return IMG_FMT_I420_CUSTOM_COLOR_SPACE;
+    case AOM_IMG_FMT_I422: return IMG_FMT_422;
+    case AOM_IMG_FMT_I444: return IMG_FMT_444;
+    case AOM_IMG_FMT_444A: return IMG_FMT_444A;
+    case AOM_IMG_FMT_I42016: return IMG_FMT_420;
+    case AOM_IMG_FMT_I42216: return IMG_FMT_422;
+    case AOM_IMG_FMT_I44416: return IMG_FMT_444;
+    default: break;
+    }
+    return IMG_FMT_422;
+}
+
 // callback function to get frame data and mi data
 void RefDecoder::inspect_cb(void* pbi, void* data) {
     RefDecoder* pThis = (RefDecoder*)data;
     if (pThis == nullptr)
         return;
+
+    if (!pThis->video_param_.width) {
+        aom_codec_ctx_t* codec_ =
+            reinterpret_cast<aom_codec_ctx_t*>(pThis->codec_handle_);
+        aom_img_fmt_t fmt;
+        int render_size[2];
+        unsigned int bit_depth;
+        aom_codec_control(codec_, AV1D_GET_IMG_FORMAT, &fmt);
+        aom_codec_control(codec_, AV1D_GET_DISPLAY_SIZE, render_size);
+        aom_codec_control(codec_, AV1D_GET_BIT_DEPTH, &bit_depth);
+        pThis->video_param_.format = trans_video_format(fmt);
+        pThis->video_param_.width = render_size[0];
+        pThis->video_param_.height = render_size[1];
+        pThis->video_param_.bits_per_sample = bit_depth;
+    }
 
     if (!pThis->insp_frame_data_ && pThis->video_param_.width) {
         pThis->insp_frame_data_ = new insp_frame_data();
@@ -240,7 +162,7 @@ void RefDecoder::inspect_cb(void* pbi, void* data) {
     }
     insp_frame_data* inspect_data = (insp_frame_data*)pThis->insp_frame_data_;
     if (!pThis->insp_frame_data_) {
-        printf("inspect frame data structure is not ready!\n");
+        std::cerr << "inspect frame data structure is not ready!\n";
         return;
     }
 
@@ -290,40 +212,16 @@ void RefDecoder::parse_frame_info() {
         get_max_intra_period_length(stream_info_.frame_type_list);
 }
 
-static VideoColorFormat trans_video_format(aom_img_fmt_t fmt) {
-    switch (fmt) {
-    case AOM_IMG_FMT_YV12: return IMG_FMT_YV12;
-    case AOM_IMG_FMT_I420: return IMG_FMT_I420;
-    case AOM_IMG_FMT_AOMYV12: return IMG_FMT_YV12_CUSTOM_COLOR_SPACE;
-    case AOM_IMG_FMT_AOMI420: return IMG_FMT_I420_CUSTOM_COLOR_SPACE;
-    case AOM_IMG_FMT_I422: return IMG_FMT_422;
-    case AOM_IMG_FMT_I444: return IMG_FMT_444;
-    case AOM_IMG_FMT_444A: return IMG_FMT_444A;
-    case AOM_IMG_FMT_I42016: return IMG_FMT_420;
-    case AOM_IMG_FMT_I42216: return IMG_FMT_422;
-    case AOM_IMG_FMT_I44416: return IMG_FMT_444;
-    default: break;
-    }
-    return IMG_FMT_422;
-}
-
-RefDecoder::RefDecoder(RefDecoder::RefDecoderErr& ret, bool enable_analyzer) {
-    dec_frame_cnt_ = 0;
-    init_timestamp_ = 0;
-    frame_interval_ = 1;
-    insp_frame_data_ = nullptr;
-    parser_ = nullptr;
-    enc_bytes_ = 0;
-    burst_bytes_ = 0;
-    video_param_ = VideoFrameParam();
-
-    codec_handle_ = new aom_codec_ctx_t();
-    if (codec_handle_ == nullptr) {
-        ret = REF_CODEC_MEM_ERROR;
-        return;
-    }
-    memset(codec_handle_, 0, sizeof(aom_codec_ctx_t));
-
+RefDecoder::RefDecoder(RefDecoder::RefDecoderErr& ret, bool enable_analyzer)
+    : codec_handle_(new aom_codec_ctx_t()),
+      dec_frame_cnt_(0),
+      init_timestamp_(0),
+      frame_interval_(1),
+      insp_frame_data_(nullptr),
+      video_param_(VideoFrameParam()),
+      parser_(nullptr),
+      enc_bytes_(0),
+      burst_bytes_(0) {
     aom_codec_ctx_t* codec_ = (aom_codec_ctx_t*)codec_handle_;
     aom_codec_err_t err =
         aom_codec_dec_init(codec_, aom_codec_av1_dx(), nullptr, 0);
@@ -382,6 +280,23 @@ RefDecoder::RefDecoderErr RefDecoder::decode(const uint8_t* data,
     }
     enc_bytes_ += size;
     burst_bytes_ = std::max(burst_bytes_, size);
+
+    // Capture per-frame parses for ref-frame management cross-check.
+    // AOMD_GET_LAST_REF_UPDATES returns refresh_frame_flags (bit i set iff
+    // DPB slot i was refreshed). AOMD_GET_FRAME_CORRUPTED reports decode
+    // integrity. Both controls reflect the LAST decoded frame.
+    int refresh_flags = 0;
+    if (aom_codec_control(codec_, AOMD_GET_LAST_REF_UPDATES, &refresh_flags) ==
+        AOM_CODEC_OK) {
+        stream_info_.refresh_frame_flags_list.push_back(
+            (uint8_t)(refresh_flags & 0xFF));
+    }
+    int corrupted = 0;
+    if (aom_codec_control(codec_, AOMD_GET_FRAME_CORRUPTED, &corrupted) ==
+        AOM_CODEC_OK) {
+        stream_info_.frame_corrupted_list.push_back(corrupted);
+    }
+
     return REF_CODEC_OK;
 }
 
@@ -394,7 +309,7 @@ RefDecoder::RefDecoderErr RefDecoder::get_frame(VideoFrame& frame) {
         return REF_CODEC_NEED_MORE_INPUT;
 
     trans_video_frame(img, frame);
-    video_param_ = (VideoFrameParam)frame;
+    video_param_ = frame;
     dec_frame_cnt_++;
     stream_info_.frame_bit_rate = enc_bytes_ / dec_frame_cnt_ * 8;
     stream_info_.format = frame.format;

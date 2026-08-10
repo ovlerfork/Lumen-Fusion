@@ -11,13 +11,11 @@ node_modules/
 .idea/
 *.swp
 *.swo
-
+.codex/
 # Temporary
 *.log
 *.tmp
 
-# Local development helpers and reports
-/docs/sunshine-v2026.516.143833-gap-report.md
 
 # Local installer customization
 /install.sh

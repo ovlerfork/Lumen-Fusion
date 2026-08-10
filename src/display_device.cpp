@@ -5,6 +5,14 @@
 // header include
 #include "display_device.h"
 
+// standard includes
+#include <algorithm>
+#include <cctype>
+#include <mutex>
+#include <regex>
+#include <string_view>
+#include <thread>
+
 // lib includes
 #include <boost/algorithm/string.hpp>
 #include <display_device/audio_context_interface.h>
@@ -12,21 +20,13 @@
 #include <display_device/json.h>
 #include <display_device/retry_scheduler.h>
 #include <display_device/settings_manager_interface.h>
-#include <mutex>
-#include <regex>
-#include <thread>
 
 // local includes
 #include "audio.h"
 #include "platform/common.h"
 #include "rtsp.h"
 
-// platform-specific includes
-#ifdef _WIN32
-  #include <display_device/windows/settings_manager.h>
-  #include <display_device/windows/win_api_layer.h>
-  #include <display_device/windows/win_display_device.h>
-#endif
+#include <display_device/factory.h>
 
 namespace display_device {
   namespace {
@@ -128,6 +128,37 @@ namespace display_device {
         throw std::out_of_range("stou");
       }
       return (int) result;
+    }
+
+#ifdef __APPLE__
+    bool is_unsigned_integer(std::string_view value) {
+      return !value.empty() && std::ranges::all_of(value, [](unsigned char character) {
+        return std::isdigit(character);
+      });
+    }
+#endif
+
+    std::string_view apply_result_name(SettingsManagerInterface::ApplyResult result) {
+      using enum SettingsManagerInterface::ApplyResult;
+
+      switch (result) {
+        case Ok:
+          return "Ok";
+        case ApiTemporarilyUnavailable:
+          return "ApiTemporarilyUnavailable";
+        case DevicePrepFailed:
+          return "DevicePrepFailed";
+        case PrimaryDevicePrepFailed:
+          return "PrimaryDevicePrepFailed";
+        case DisplayModePrepFailed:
+          return "DisplayModePrepFailed";
+        case HdrStatePrepFailed:
+          return "HdrStatePrepFailed";
+        case PersistenceSaveFailed:
+          return "PersistenceSaveFailed";
+      }
+
+      return "Unknown";
     }
 
     /**
@@ -607,27 +638,14 @@ namespace display_device {
       return true;
     }
 
-    /**
-     * @brief Construct a settings manager interface to manage display device settings.
-     * @param persistence_filepath File location for saving persistent state.
-     * @param video_config User's video related configuration.
-     * @return An interface or nullptr if the OS does not support the interface.
-     */
-    std::unique_ptr<SettingsManagerInterface> make_settings_manager([[maybe_unused]] const std::filesystem::path &persistence_filepath, [[maybe_unused]] const config::video_t &video_config) {
-#ifdef _WIN32
-      return std::make_unique<SettingsManager>(
-        std::make_shared<WinDisplayDevice>(std::make_shared<WinApiLayer>()),
-        std::make_shared<sunshine_audio_context_t>(),
-        std::make_unique<PersistentState>(
-          std::make_shared<FileSettingsPersistence>(persistence_filepath)
-        ),
-        WinWorkarounds {
-          .m_hdr_blank_delay = video_config.dd.wa.hdr_toggle_delay != std::chrono::milliseconds::zero() ? std::make_optional(video_config.dd.wa.hdr_toggle_delay) : std::nullopt
-        }
-      );
-#else
-      return nullptr;
-#endif
+    std::unique_ptr<SettingsManagerInterface> make_settings_manager(const std::filesystem::path &persistence_filepath, const config::video_t &video_config) {
+      SettingsManagerFactoryConfig config {
+        .m_audio_context_api = std::make_shared<sunshine_audio_context_t>(),
+        .m_settings_persistence_api = std::make_shared<FileSettingsPersistence>(persistence_filepath),
+        .m_throw_on_persistence_load_error = false,
+        .m_hdr_blank_delay = video_config.dd.wa.hdr_toggle_delay != std::chrono::milliseconds::zero() ? std::make_optional(video_config.dd.wa.hdr_toggle_delay) : std::nullopt
+      };
+      return display_device::makeSettingsManager(config);
     }
 
     /**
@@ -656,7 +674,7 @@ namespace display_device {
         scheduler_option.m_execution = SchedulerOptions::Execution::ScheduledOnly;
       }
 
-      DD_DATA.sm_instance->schedule([try_once = (option == revert_option_e::try_once), tried_out_devices = std::set<std::string> {}](auto &settings_iface, auto &stop_token) mutable {
+      DD_DATA.sm_instance->schedule([try_once = (option == revert_option_e::try_once), tried_out_devices = display_device::StringSet {}](auto &settings_iface, auto &stop_token) mutable {
         if (try_once) {
           std::ignore = settings_iface.revertSettings();
           stop_token.requestStop();
@@ -665,7 +683,7 @@ namespace display_device {
 
         auto available_devices {[&settings_iface]() {
           const auto devices {settings_iface.enumAvailableDevices()};
-          std::set<std::string> parsed_devices;
+          display_device::StringSet parsed_devices;
 
           std::transform(
             std::begin(devices),
@@ -753,9 +771,17 @@ namespace display_device {
       return output_name;
     }
 
-    return DD_DATA.sm_instance->execute([&output_name](auto &settings_iface) {
+    const auto mapped_name = DD_DATA.sm_instance->execute([&output_name](auto &settings_iface) {
       return settings_iface.getDisplayName(output_name);
     });
+
+#ifdef __APPLE__
+    if (mapped_name.empty() && is_unsigned_integer(output_name)) {
+      return output_name;
+    }
+#endif
+
+    return mapped_name;
   }
 
   void configure_display(const config::video_t &video_config, const rtsp_stream::launch_session_t &session) {
@@ -766,11 +792,13 @@ namespace display_device {
     }
 
     if (const auto *disabled {std::get_if<configuration_disabled_tag_t>(&result)}; disabled) {
+      BOOST_LOG(info) << "Display device configuration is disabled. Reverting any active display device configuration.";
       revert_configuration();
       return;
     }
 
-    // Error already logged for failed_to_parse_tag_t case, and we also don't
+    BOOST_LOG(error) << "Failed to parse display device configuration. Display settings will not be changed.";
+    // Error details should already be logged for failed_to_parse_tag_t case, and we also don't
     // want to revert active configuration in case we have any
   }
 
@@ -796,10 +824,24 @@ namespace display_device {
       return;
     }
 
+    BOOST_LOG(info) << "Scheduling display device configuration:\n"
+                    << toJson(config);
+
     DD_DATA.sm_instance->schedule([config](auto &settings_iface, auto &stop_token) {
+      using enum SettingsManagerInterface::ApplyResult;
+
       // We only want to keep retrying in case of a transient errors.
       // In other cases, when we either fail or succeed we just want to stop...
-      if (settings_iface.applySettings(config) != SettingsManagerInterface::ApplyResult::ApiTemporarilyUnavailable) {
+      const auto result = settings_iface.applySettings(config);
+      if (result == Ok) {
+        BOOST_LOG(info) << "Display device configuration applied successfully.";
+      } else if (result == ApiTemporarilyUnavailable) {
+        BOOST_LOG(warning) << "Display device configuration API is temporarily unavailable. Will retry.";
+      } else {
+        BOOST_LOG(error) << "Display device configuration failed with result: " << apply_result_name(result);
+      }
+
+      if (result != ApiTemporarilyUnavailable) {
         stop_token.requestStop();
       }
     },
@@ -847,7 +889,21 @@ namespace display_device {
     SingleDisplayConfiguration config;
     config.m_device_id = video_config.output_name;
     config.m_device_prep = *device_prep;
-    config.m_hdr_state = parse_hdr_option(video_config, session);
+
+    const auto hdr_state = parse_hdr_option(video_config, session);
+#ifdef __APPLE__
+    if (hdr_state) {
+      BOOST_LOG(info) << "Ignoring HDR display device request on macOS because macOS HDR changes are not supported by libdisplaydevice.";
+    }
+#else
+    config.m_hdr_state = hdr_state;
+#endif
+
+#ifdef __APPLE__
+    if (config.m_device_prep != SingleDisplayConfiguration::DevicePreparation::VerifyOnly) {
+      BOOST_LOG(warning) << "macOS libdisplaydevice currently supports only VerifyOnly display preparation. The requested preparation mode will fail.";
+    }
+#endif
 
     if (!parse_resolution_option(video_config, session, config)) {
       // Error already logged

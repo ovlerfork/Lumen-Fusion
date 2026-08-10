@@ -8,5 +8,11 @@
   <string>Lumina</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>This app requires access to your microphone to stream audio.</string>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Lumina advertises itself on your local network via Bonjour so Moonlight clients can discover this host.</string>
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_nvstream._tcp</string>
+  </array>
 </dict>
 </plist>
