@@ -2,6 +2,10 @@
 # this file will also load platform specific definitions
 
 list(APPEND SUNSHINE_COMPILE_OPTIONS -Wall -Wno-sign-compare)
+
+if(LUMINA_ENABLE_STREAM_PERF_LOGGING)
+    list(APPEND SUNSHINE_DEFINITIONS LUMINA_ENABLE_STREAM_PERF_LOGGING=1)
+endif()
 # Wall - enable all warnings
 # Werror - treat warnings as errors
 # Wno-maybe-uninitialized/Wno-uninitialized - disable warnings for maybe uninitialized variables

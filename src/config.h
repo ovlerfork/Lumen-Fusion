@@ -246,6 +246,7 @@ namespace config {
   struct sunshine_t {
     std::string locale;
     int min_log_level;
+    bool streaming_performance_logging;
     std::bitset<flag::FLAG_SIZE> flags;
     std::string credentials_file;
 

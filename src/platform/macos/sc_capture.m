@@ -301,7 +301,7 @@ API_AVAILABLE(macos(12.3))
             // Null frame — re-deliver cached frame to fill gaps
             @synchronized(self) {
                 if (self.lastValidSampleBuffer && !self.stopping && self.videoCallback) {
-                    self.videoCallback(self.lastValidSampleBuffer);
+                    self.videoCallback(self.lastValidSampleBuffer, YES);
                 }
             }
             return;
@@ -317,7 +317,7 @@ API_AVAILABLE(macos(12.3))
 
         if (self.stopping) return;
         if (self.videoCallback) {
-            if (!self.videoCallback(sampleBuffer)) {
+            if (!self.videoCallback(sampleBuffer, NO)) {
                 self.stopping = YES;
                 dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
                     [self stopCapture];

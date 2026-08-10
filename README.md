@@ -174,12 +174,20 @@ audio_sink = system
 # Maximum streaming bitrate in kbps
 max_bitrate = 80000
 
-# Virtual display — "enabled" creates displays on-demand (recommended)
-virtual_display = enabled
+# Virtual display — disabled by default
+virtual_display = disabled
 
 # UPnP port mapping for remote access
 upnp = enabled
 ```
+
+### Streaming Performance Diagnostics
+
+For temporary capture, encoder, FEC, network-send, and Moonlight loss metrics,
+see [Streaming performance diagnostics](docs/streaming-performance-logging.md).
+Build this developer-only profiler with `./dev.sh performance`, then enable its
+runtime flag directly in `sunshine.conf`. Its dedicated log channel works while
+the normal log level remains set to `error`.
 
 ### Experimental Core Audio Tap
 
@@ -428,7 +436,19 @@ Moonlight Client connects (e.g. 1920x1080@60Hz)
 
 ### Virtual Display System (CGVirtualDisplay)
 
-Lumina uses Apple's private `CGVirtualDisplay` API (available on macOS 14+) to create virtual displays on demand. This eliminates the need for third-party tools like BetterDisplay.
+Virtual displays are disabled by default. On macOS, enable them from **Web UI →
+Configuration → Audio/Video → Virtual Display**, select **Enabled**, and save.
+The change applies to the next stream. Alternatively, add the following to
+`~/.config/lumina/sunshine.conf` and restart Lumina:
+
+```ini
+virtual_display = enabled
+```
+
+Lumina then uses Apple's private `CGVirtualDisplay` API (available on macOS 14+)
+to create a display on demand at the resolution and refresh rate requested by
+Moonlight. The virtual display is removed when streaming stops. This eliminates
+the need for third-party tools like BetterDisplay.
 
 **Why a subprocess?** CGVirtualDisplay doesn't work when created directly in the Lumina process. The TCC (Transparency, Consent, and Control) framework and WindowServer registration require a clean process context. Lumina spawns `vd_helper` as a subprocess that:
 

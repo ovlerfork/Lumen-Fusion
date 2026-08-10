@@ -506,7 +506,7 @@ namespace config {
       {}  // wa
     },  // display_device
 
-    "enabled"s,  // virtual_display
+    "disabled"s,  // virtual_display
 
     0,  // max_bitrate
     0  // minimum_fps_target (0 = framerate)
@@ -571,6 +571,7 @@ namespace config {
   sunshine_t sunshine {
     "en",  // locale
     2,  // min_log_level
+    false,  // streaming_performance_logging
     0,  // flags
     {},  // User file
     {},  // Username
@@ -1298,6 +1299,7 @@ namespace config {
 
     bool_f(vars, "notify_pre_releases", sunshine.notify_pre_releases);
     bool_f(vars, "system_tray", sunshine.system_tray);
+    bool_f(vars, "streaming_performance_logging", sunshine.streaming_performance_logging);
 
     int port = sunshine.port;
     int_between_f(vars, "port"s, port, {1024 + nvhttp::PORT_HTTPS, 65535 - rtsp_stream::RTSP_SETUP_PORT});

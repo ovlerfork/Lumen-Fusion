@@ -19,6 +19,23 @@ struct AVPacket;
 
 namespace video {
 
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+  // LUMINA_STREAM_PERF_DIAGNOSTICS_BEGIN
+  // Temporary per-frame timestamps. Compile out with
+  // -DLUMINA_ENABLE_STREAM_PERF_LOGGING=OFF and remove after diagnosis.
+  struct perf_timing_t {
+    bool active {false};
+    bool capture_repeated {false};
+    std::optional<std::chrono::steady_clock::time_point> capture;
+    std::chrono::steady_clock::time_point capture_dequeued {};
+    std::chrono::steady_clock::time_point convert_start {};
+    std::chrono::steady_clock::time_point convert_ready {};
+    std::chrono::steady_clock::time_point encode_submit {};
+    std::chrono::steady_clock::time_point encode_ready {};
+  };
+  // LUMINA_STREAM_PERF_DIAGNOSTICS_END
+#endif
+
   /* Encoding configuration requested by remote client */
   struct config_t {
     int width;  // Video width in pixels
@@ -258,6 +275,9 @@ namespace video {
     void *channel_data = nullptr;
     bool after_ref_frame_invalidation = false;
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+    perf_timing_t perf_timing;
+#endif
   };
 
   struct packet_raw_avcodec: packet_raw_t {

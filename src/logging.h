@@ -16,6 +16,12 @@ extern boost::log::sources::severity_logger<int> info;
 extern boost::log::sources::severity_logger<int> warning;
 extern boost::log::sources::severity_logger<int> error;
 extern boost::log::sources::severity_logger<int> fatal;
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+// Temporary profiler-only logger. Severity 7 deliberately bypasses the normal
+// 0-6 min_log_level filter. Calls must still be guarded by the dedicated
+// streaming_performance_logging runtime setting.
+extern boost::log::sources::severity_logger<int> performance;
+#endif
 #ifdef SUNSHINE_TESTS
 extern boost::log::sources::severity_logger<int> tests;
 #endif

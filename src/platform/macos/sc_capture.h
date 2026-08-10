@@ -26,7 +26,7 @@ API_AVAILABLE(macos(12.3))
 @property (nonatomic, strong) dispatch_queue_t videoQueue;
 @property (nonatomic, strong) dispatch_queue_t audioQueue;
 
-typedef bool (^VideoFrameCallbackBlock)(CMSampleBufferRef);
+typedef bool (^VideoFrameCallbackBlock)(CMSampleBufferRef, BOOL frameRepeated);
 typedef void (^AudioSampleCallbackBlock)(CMSampleBufferRef);
 
 @property (nonatomic, copy) VideoFrameCallbackBlock videoCallback;

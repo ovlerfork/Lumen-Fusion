@@ -13,6 +13,11 @@ option(NPM_OFFLINE "Use offline npm packages. You must ensure packages are in yo
 
 option(BUILD_WERROR "Enable -Werror flag." OFF)
 
+# Temporary streaming profiler. Keep this separate from BUILD_TESTS and the
+# normal log level so a diagnostic build can emit PERF_* records at any log
+# level. It defaults to OFF; enable it only for a performance diagnostic build.
+option(LUMINA_ENABLE_STREAM_PERF_LOGGING "Compile temporary streaming performance diagnostics" OFF)
+
 # if this option is set, the build will exit after configuring special package configuration files
 option(SUNSHINE_CONFIGURE_ONLY "Configure special files only, then exit." OFF)
 

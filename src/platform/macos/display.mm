@@ -26,7 +26,7 @@ namespace platf {
    * @brief Process a CMSampleBuffer frame into an img_t for the encoder pipeline.
    * Shared between AVFoundation and ScreenCaptureKit capture backends.
    */
-  static bool process_frame(CMSampleBufferRef sampleBuffer, img_t *img) {
+  static bool process_frame(CMSampleBufferRef sampleBuffer, img_t *img, bool frame_repeated = false) {
     // Check for valid pixel data before processing (SCK can deliver status frames without image content)
     CVPixelBufferRef pixBuf = CMSampleBufferGetImageBuffer(sampleBuffer);
     if (!pixBuf) {
@@ -53,6 +53,7 @@ namespace platf {
     img->row_pitch = (int) CVPixelBufferGetBytesPerRow(new_pixel_buffer->buf);
     img->pixel_pitch = img->row_pitch / img->width;
     img->frame_timestamp = std::chrono::steady_clock::now();
+    img->frame_repeated = frame_repeated;
 
     old_data_retainer = nullptr;
     return true;
@@ -195,12 +196,12 @@ namespace platf {
     }
 
     capture_e capture(const push_captured_image_cb_t &push_captured_image_cb, const pull_free_image_cb_t &pull_free_image_cb, bool *cursor) override {
-      auto signal = [sc_capture captureVideo:^(CMSampleBufferRef sampleBuffer) {
+      auto signal = [sc_capture captureVideo:^(CMSampleBufferRef sampleBuffer, BOOL frameRepeated) {
         std::shared_ptr<img_t> img_out;
         if (!pull_free_image_cb(img_out)) {
           return false;
         }
-        if (!process_frame(sampleBuffer, img_out.get())) {
+        if (!process_frame(sampleBuffer, img_out.get(), frameRepeated)) {
           return true;  // skip this frame but continue capturing
         }
         if (!push_captured_image_cb(std::move(img_out), true)) {

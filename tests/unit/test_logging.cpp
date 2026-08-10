@@ -17,6 +17,9 @@ namespace {
     std::tuple("warning", &warning),
     std::tuple("error", &error),
     std::tuple("fatal", &fatal),
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+    std::tuple("performance", &performance),
+#endif
   };
 
   constexpr auto log_file = "test_sunshine.log";

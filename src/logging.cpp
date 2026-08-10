@@ -43,6 +43,9 @@ bl::sources::severity_logger<int> info(2);  // Should be informed about
 bl::sources::severity_logger<int> warning(3);  // Strange events
 bl::sources::severity_logger<int> error(4);  // Recoverable errors
 bl::sources::severity_logger<int> fatal(5);  // Unrecoverable errors
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+bl::sources::severity_logger<int> performance(7);  // Temporary profiler output; independent of min_log_level
+#endif
 #ifdef SUNSHINE_TESTS
 bl::sources::severity_logger<int> tests(10);  // Automatic tests output
 #endif
@@ -86,6 +89,11 @@ namespace logging {
       case 5:
         log_type = "Fatal: "sv;
         break;
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+      case 7:
+        log_type = "Performance: "sv;
+        break;
+#endif
 #ifdef SUNSHINE_TESTS
       case 10:
         log_type = "Tests: "sv;
@@ -129,6 +137,11 @@ namespace logging {
       case 5:
         android_priority = ANDROID_LOG_FATAL;
         break;
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+      case 7:
+        android_priority = ANDROID_LOG_INFO;
+        break;
+#endif
       default:
         android_priority = ANDROID_LOG_UNKNOWN;
         break;

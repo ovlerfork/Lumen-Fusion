@@ -502,6 +502,9 @@ namespace video {
       avcodec_ctx = std::move(other.avcodec_ctx);
       replacements = std::move(other.replacements);
       pending_frame_timestamps = std::move(other.pending_frame_timestamps);
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+      pending_perf_timings = std::move(other.pending_perf_timings);
+#endif
       sps = std::move(other.sps);
       vps = std::move(other.vps);
 
@@ -554,6 +557,12 @@ namespace video {
     // calls ago, so the timestamp must be looked up by the packet's pts rather
     // than assumed to belong to the frame just submitted.
     std::map<int64_t, std::chrono::steady_clock::time_point> pending_frame_timestamps;
+
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+    // LUMINA_STREAM_PERF_DIAGNOSTICS_BEGIN
+    std::map<int64_t, perf_timing_t> pending_perf_timings;
+    // LUMINA_STREAM_PERF_DIAGNOSTICS_END
+#endif
 
     // VideoToolbox returns encoded packets asynchronously. Avoid submitting
     // several expensive keyframes while the first requested IDR is still in
@@ -1621,7 +1630,11 @@ namespace video {
     }
   }
 
-  int encode_avcodec(int64_t frame_nr, avcodec_encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
+  int encode_avcodec(int64_t frame_nr, avcodec_encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+                     , perf_timing_t perf_timing
+#endif
+  ) {
     auto &frame = session.device->frame;
     frame->pts = frame_nr;
 
@@ -1634,9 +1647,21 @@ namespace video {
       session.pending_frame_timestamps.emplace(frame_nr, *frame_timestamp);
     }
 
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+    // LUMINA_STREAM_PERF_DIAGNOSTICS_BEGIN
+    if (perf_timing.active) {
+      perf_timing.encode_submit = std::chrono::steady_clock::now();
+      session.pending_perf_timings.emplace(frame_nr, perf_timing);
+    }
+    // LUMINA_STREAM_PERF_DIAGNOSTICS_END
+#endif
+
     // send the frame to the encoder
     auto ret = avcodec_send_frame(ctx.get(), frame);
     if (ret < 0) {
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+      session.pending_perf_timings.erase(frame_nr);
+#endif
       char err_str[AV_ERROR_MAX_STRING_SIZE] {0};
       BOOST_LOG(error) << "Could not send a frame for encoding: "sv << av_make_error_string(err_str, AV_ERROR_MAX_STRING_SIZE, ret);
 
@@ -1653,6 +1678,15 @@ namespace video {
       } else if (ret < 0) {
         return ret;
       }
+
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+      // LUMINA_STREAM_PERF_DIAGNOSTICS_BEGIN
+      auto perf_ready = std::chrono::steady_clock::time_point {};
+      if (!session.pending_perf_timings.empty()) {
+        perf_ready = std::chrono::steady_clock::now();
+      }
+      // LUMINA_STREAM_PERF_DIAGNOSTICS_END
+#endif
 
       if (av_packet->flags & AV_PKT_FLAG_KEY) {
         BOOST_LOG(debug) << "Frame "sv << av_packet->pts << ": IDR Keyframe (AV_FRAME_FLAG_KEY)"sv;
@@ -1701,6 +1735,19 @@ namespace video {
         }
       }
 
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+      // LUMINA_STREAM_PERF_DIAGNOSTICS_BEGIN
+      if (av_packet && perf_ready != std::chrono::steady_clock::time_point {}) {
+        auto it = session.pending_perf_timings.find(av_packet->pts);
+        if (it != session.pending_perf_timings.end()) {
+          packet->perf_timing = it->second;
+          packet->perf_timing.encode_ready = perf_ready;
+          session.pending_perf_timings.erase(session.pending_perf_timings.begin(), std::next(it));
+        }
+      }
+      // LUMINA_STREAM_PERF_DIAGNOSTICS_END
+#endif
+
       packet->replacements = &session.replacements;
       packet->channel_data = channel_data;
       packets->raise(std::move(packet));
@@ -1709,8 +1756,24 @@ namespace video {
     return 0;
   }
 
-  int encode_nvenc(int64_t frame_nr, nvenc_encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
+  int encode_nvenc(int64_t frame_nr, nvenc_encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+                  , perf_timing_t perf_timing
+#endif
+  ) {
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+    // LUMINA_STREAM_PERF_DIAGNOSTICS_BEGIN
+    if (perf_timing.active) {
+      perf_timing.encode_submit = std::chrono::steady_clock::now();
+    }
+    // LUMINA_STREAM_PERF_DIAGNOSTICS_END
+#endif
     auto encoded_frame = session.encode_frame(frame_nr);
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+    if (perf_timing.active) {
+      perf_timing.encode_ready = std::chrono::steady_clock::now();
+    }
+#endif
     if (encoded_frame.data.empty()) {
       BOOST_LOG(error) << "NvENC returned empty packet";
       return -1;
@@ -1724,16 +1787,31 @@ namespace video {
     packet->channel_data = channel_data;
     packet->after_ref_frame_invalidation = encoded_frame.after_ref_frame_invalidation;
     packet->frame_timestamp = frame_timestamp;
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+    packet->perf_timing = perf_timing;
+#endif
     packets->raise(std::move(packet));
 
     return 0;
   }
 
-  int encode(int64_t frame_nr, encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
+  int encode(int64_t frame_nr, encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+             , perf_timing_t perf_timing = {}
+#endif
+  ) {
     if (auto avcodec_session = dynamic_cast<avcodec_encode_session_t *>(&session)) {
-      return encode_avcodec(frame_nr, *avcodec_session, packets, channel_data, frame_timestamp);
+      return encode_avcodec(frame_nr, *avcodec_session, packets, channel_data, frame_timestamp
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+                            , perf_timing
+#endif
+      );
     } else if (auto nvenc_session = dynamic_cast<nvenc_encode_session_t *>(&session)) {
-      return encode_nvenc(frame_nr, *nvenc_session, packets, channel_data, frame_timestamp);
+      return encode_nvenc(frame_nr, *nvenc_session, packets, channel_data, frame_timestamp
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+                          , perf_timing
+#endif
+      );
     }
 
     return -1;
@@ -2227,21 +2305,44 @@ namespace video {
       }
 
       std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+      // LUMINA_STREAM_PERF_DIAGNOSTICS_BEGIN
+      perf_timing_t perf_timing;
+      perf_timing.active = config::sunshine.streaming_performance_logging;
+      // LUMINA_STREAM_PERF_DIAGNOSTICS_END
+#endif
 
       // Encode at a minimum FPS to avoid image quality issues with static content
       if (!requested_idr_frame || images->peek()) {
         if (auto img = images->pop(max_frametime)) {
           frame_timestamp = img->frame_timestamp;
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+          if (perf_timing.active) {
+            perf_timing.capture = img->frame_timestamp;
+            perf_timing.capture_repeated = img->frame_repeated;
+            perf_timing.capture_dequeued = std::chrono::steady_clock::now();
+            perf_timing.convert_start = perf_timing.capture_dequeued;
+          }
+#endif
           if (session->convert(*img)) {
             BOOST_LOG(error) << "Could not convert image"sv;
             return;
           }
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+          if (perf_timing.active) {
+            perf_timing.convert_ready = std::chrono::steady_clock::now();
+          }
+#endif
         } else if (!images->running()) {
           break;
         }
       }
 
-      if (encode(frame_nr++, *session, packets, channel_data, frame_timestamp)) {
+      if (encode(frame_nr++, *session, packets, channel_data, frame_timestamp
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+                 , perf_timing
+#endif
+          )) {
         BOOST_LOG(error) << "Could not encode video packet"sv;
         return;
       }
@@ -2489,6 +2590,19 @@ namespace video {
             ctx->idr_events->pop();
           }
 
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+          // LUMINA_STREAM_PERF_DIAGNOSTICS_BEGIN
+          perf_timing_t perf_timing;
+          perf_timing.active = config::sunshine.streaming_performance_logging;
+          if (perf_timing.active && frame_captured && img) {
+            perf_timing.capture = img->frame_timestamp;
+            perf_timing.capture_repeated = img->frame_repeated;
+            perf_timing.capture_dequeued = std::chrono::steady_clock::now();
+            perf_timing.convert_start = perf_timing.capture_dequeued;
+          }
+          // LUMINA_STREAM_PERF_DIAGNOSTICS_END
+#endif
+
           if (frame_captured && pos->session->convert(*img)) {
             BOOST_LOG(error) << "Could not convert image"sv;
             ctx->shutdown_event->raise(true);
@@ -2496,12 +2610,22 @@ namespace video {
             continue;
           }
 
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+          if (perf_timing.active && frame_captured) {
+            perf_timing.convert_ready = std::chrono::steady_clock::now();
+          }
+#endif
+
           std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
           if (img) {
             frame_timestamp = img->frame_timestamp;
           }
 
-          if (encode(ctx->frame_nr++, *pos->session, ctx->packets, ctx->channel_data, frame_timestamp)) {
+          if (encode(ctx->frame_nr++, *pos->session, ctx->packets, ctx->channel_data, frame_timestamp
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+                     , perf_timing
+#endif
+              )) {
             BOOST_LOG(error) << "Could not encode video packet"sv;
             ctx->shutdown_event->raise(true);
 

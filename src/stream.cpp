@@ -4,9 +4,14 @@
  */
 
 // standard includes
+#include <array>
+#include <ctime>
 #include <fstream>
 #include <future>
+#include <iomanip>
 #include <queue>
+#include <sstream>
+#include <unordered_map>
 
 // lib includes
 #include <boost/endian/arithmetic.hpp>
@@ -368,6 +373,12 @@ namespace stream {
       safe::mail_raw_t::event_t<bool> idr_events;
       safe::mail_raw_t::event_t<std::pair<int64_t, int64_t>> invalidate_ref_frames_events;
 
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+      // LUMINA_STREAM_PERF_DIAGNOSTICS_BEGIN
+      std::atomic<std::uint64_t> perf_idr_requests {0};
+      // LUMINA_STREAM_PERF_DIAGNOSTICS_END
+#endif
+
       std::unique_ptr<platf::deinit_t> qos;
     } video;
 
@@ -411,6 +422,138 @@ namespace stream {
 
     std::atomic<session::state_e> state;
   };
+
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+  // LUMINA_STREAM_PERF_DIAGNOSTICS_BEGIN
+  // Temporary, bounded profiler state. There are at most ~300 frame samples in
+  // a five-second 60 FPS window, so this never allocates in the streaming path.
+  struct perf_samples_t {
+    static constexpr std::size_t capacity = 512;
+
+    void add(double value) {
+      sum += value;
+      maximum = std::max(maximum, value);
+      ++total_count;
+      if (sample_count < samples.size()) {
+        samples[sample_count++] = value;
+      }
+    }
+
+    double average() const {
+      return total_count ? sum / static_cast<double>(total_count) : 0.0;
+    }
+
+    double percentile(double fraction) const {
+      if (!sample_count) {
+        return 0.0;
+      }
+
+      auto sorted = samples;
+      const auto index = static_cast<std::size_t>((sample_count - 1) * fraction);
+      std::nth_element(sorted.begin(), sorted.begin() + index, sorted.begin() + sample_count);
+      return sorted[index];
+    }
+
+    std::array<double, capacity> samples {};
+    std::size_t sample_count {0};
+    std::uint64_t total_count {0};
+    double sum {0.0};
+    double maximum {0.0};
+  };
+
+  struct perf_window_t {
+    perf_window_t():
+        started {std::chrono::steady_clock::now()},
+        cpu_started {std::clock()} {
+    }
+
+    static double milliseconds(const std::chrono::steady_clock::duration duration) {
+      return std::chrono::duration<double, std::milli>(duration).count();
+    }
+
+    static bool valid(const std::chrono::steady_clock::time_point point) {
+      return point != std::chrono::steady_clock::time_point {};
+    }
+
+    static void append_samples(std::ostringstream &out, std::string_view name, const perf_samples_t &samples) {
+      out << ' ' << name << "_ms_avg=" << samples.average()
+          << ' ' << name << "_ms_p50=" << samples.percentile(0.50)
+          << ' ' << name << "_ms_p95=" << samples.percentile(0.95)
+          << ' ' << name << "_ms_max=" << samples.maximum;
+    }
+
+    void report_and_reset(session_t *session, const std::chrono::steady_clock::time_point now) {
+      constexpr auto interval = std::chrono::seconds {5};
+      if (now - started < interval) {
+        return;
+      }
+
+      const auto elapsed_seconds = std::chrono::duration<double>(now - started).count();
+      const auto cpu_seconds = static_cast<double>(std::clock() - cpu_started) / CLOCKS_PER_SEC;
+      const auto &monitor = session->config.monitor;
+      const char *codec = monitor.videoFormat == 0 ? "h264" : monitor.videoFormat == 1 ? "hevc" : "av1";
+      const auto idr_requests = session->video.perf_idr_requests.exchange(0, std::memory_order_relaxed);
+
+      std::ostringstream out;
+      out << std::fixed << std::setprecision(2)
+          << "PERF_VIDEO"
+          << " session=" << session->launch_session_id
+          << " peer=" << session->video.peer.address().to_string()
+          << " width=" << monitor.width
+          << " height=" << monitor.height
+          << " requested_fps=" << monitor.framerate
+          << " requested_kbps=" << monitor.bitrate
+          << " codec=" << codec
+          << " interval_s=" << elapsed_seconds
+          << " frames=" << output_frames
+          << " source_frames=" << source_frames
+          << " duplicate_frames=" << duplicate_frames
+          << " idr_frames=" << idr_frames
+          << " idr_requests=" << idr_requests
+          << " output_fps=" << output_frames / elapsed_seconds
+          << " source_fps=" << source_frames / elapsed_seconds
+          << " process_cpu_pct=" << (cpu_seconds / elapsed_seconds * 100.0)
+          << " payload_mbps=" << (payload_bytes * 8.0 / elapsed_seconds / 1'000'000.0)
+          << " wire_mbps=" << (wire_bytes * 8.0 / elapsed_seconds / 1'000'000.0)
+          << " data_shards=" << data_shards
+          << " parity_shards=" << parity_shards;
+
+      append_samples(out, "capture_queue", capture_queue_ms);
+      append_samples(out, "convert", convert_ms);
+      append_samples(out, "encode", encode_ms);
+      append_samples(out, "broadcast_queue", broadcast_queue_ms);
+      append_samples(out, "fec", fec_ms);
+      append_samples(out, "pacing", pacing_ms);
+      append_samples(out, "send", send_ms);
+      append_samples(out, "network", network_ms);
+      append_samples(out, "capture_to_send", capture_to_send_ms);
+
+      BOOST_LOG(performance) << out.str();
+      *this = perf_window_t {};
+    }
+
+    std::chrono::steady_clock::time_point started;
+    std::clock_t cpu_started;
+    std::uint64_t output_frames {0};
+    std::uint64_t source_frames {0};
+    std::uint64_t duplicate_frames {0};
+    std::uint64_t idr_frames {0};
+    std::uint64_t payload_bytes {0};
+    std::uint64_t wire_bytes {0};
+    std::uint64_t data_shards {0};
+    std::uint64_t parity_shards {0};
+    perf_samples_t capture_queue_ms;
+    perf_samples_t convert_ms;
+    perf_samples_t encode_ms;
+    perf_samples_t broadcast_queue_ms;
+    perf_samples_t fec_ms;
+    perf_samples_t pacing_ms;
+    perf_samples_t send_ms;
+    perf_samples_t network_ms;
+    perf_samples_t capture_to_send_ms;
+  };
+  // LUMINA_STREAM_PERF_DIAGNOSTICS_END
+#endif
 
   /**
    * First part of cipher must be struct of type control_encrypted_t
@@ -596,6 +739,16 @@ namespace stream {
           break;
         case ENET_EVENT_TYPE_DISCONNECT:
           BOOST_LOG(info) << "CLIENT DISCONNECTED"sv;
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+          // LUMINA_STREAM_PERF_DIAGNOSTICS_BEGIN
+          if (config::sunshine.streaming_performance_logging) {
+            BOOST_LOG(performance)
+              << "PERF_CLIENT_DISCONNECT session=" << session->launch_session_id
+              << " peer=" << session->video.peer.address().to_string() << ':' << session->video.peer.port()
+              << " state=" << static_cast<int>(session->state.load(std::memory_order_relaxed));
+          }
+          // LUMINA_STREAM_PERF_DIAGNOSTICS_END
+#endif
           // No more clients to send video data to ^_^
           if (session->state == session::state_e::RUNNING) {
             session::stop(*session);
@@ -933,11 +1086,31 @@ namespace stream {
     });
 
     server->map(packetTypes[IDX_LOSS_STATS], [&](session_t *session, const std::string_view &payload) {
+      if (payload.size() < sizeof(std::int32_t) * 4) {
+        BOOST_LOG(error) << "Short IDX_LOSS_STATS payload: "sv << payload.size();
+        return;
+      }
+
       int32_t *stats = (int32_t *) payload.data();
       auto count = stats[0];
       std::chrono::milliseconds t {stats[1]};
 
       auto lastGoodFrame = stats[3];
+
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+      // LUMINA_STREAM_PERF_DIAGNOSTICS_BEGIN
+      if (config::sunshine.streaming_performance_logging) {
+        const auto loss_per_second = t.count() > 0 ? count * 1000.0 / t.count() : 0.0;
+        BOOST_LOG(performance)
+          << "PERF_CLIENT_LOSS session=" << session->launch_session_id
+          << " peer=" << session->video.peer.address().to_string()
+          << " lost_packets=" << count
+          << " interval_ms=" << t.count()
+          << " loss_packets_per_s=" << loss_per_second
+          << " last_good_frame=" << lastGoodFrame;
+      }
+      // LUMINA_STREAM_PERF_DIAGNOSTICS_END
+#endif
 
       BOOST_LOG(verbose)
         << "type [IDX_LOSS_STATS]"sv << std::endl
@@ -950,6 +1123,14 @@ namespace stream {
 
     server->map(packetTypes[IDX_REQUEST_IDR_FRAME], [&](session_t *session, const std::string_view &payload) {
       BOOST_LOG(debug) << "type [IDX_REQUEST_IDR_FRAME]"sv;
+
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+      // LUMINA_STREAM_PERF_DIAGNOSTICS_BEGIN
+      if (config::sunshine.streaming_performance_logging) {
+        session->video.perf_idr_requests.fetch_add(1, std::memory_order_relaxed);
+      }
+      // LUMINA_STREAM_PERF_DIAGNOSTICS_END
+#endif
 
       session->video.idr_events->raise(true);
     });
@@ -1293,6 +1474,12 @@ namespace stream {
 
     auto ratecontrol_next_frame_start = std::chrono::steady_clock::now();
 
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+    // LUMINA_STREAM_PERF_DIAGNOSTICS_BEGIN
+    std::unordered_map<std::uint32_t, perf_window_t> perf_windows;
+    // LUMINA_STREAM_PERF_DIAGNOSTICS_END
+#endif
+
     while (auto packet = packets->pop()) {
       if (shutdown_event->peek()) {
         break;
@@ -1302,6 +1489,29 @@ namespace stream {
 
       auto session = (session_t *) packet->channel_data;
       auto lowseq = session->video.lowseq;
+
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+      // LUMINA_STREAM_PERF_DIAGNOSTICS_BEGIN
+      perf_window_t *perf_window = nullptr;
+      auto perf_frame_start = std::chrono::steady_clock::time_point {};
+      double perf_frame_fec_ms = 0.0;
+      double perf_frame_pacing_ms = 0.0;
+      double perf_frame_send_ms = 0.0;
+      std::uint64_t perf_frame_wire_bytes = 0;
+      std::uint64_t perf_frame_data_shards = 0;
+      std::uint64_t perf_frame_parity_shards = 0;
+      const bool perf_frame_had_capture_timestamp = packet->frame_timestamp.has_value();
+
+      if (config::sunshine.streaming_performance_logging) {
+        perf_frame_start = std::chrono::steady_clock::now();
+        perf_window = &perf_windows[session->launch_session_id];
+        const auto &timing = packet->perf_timing;
+        if (timing.active && perf_window_t::valid(timing.encode_ready)) {
+          perf_window->broadcast_queue_ms.add(perf_window_t::milliseconds(perf_frame_start - timing.encode_ready));
+        }
+      }
+      // LUMINA_STREAM_PERF_DIAGNOSTICS_END
+#endif
 
       std::string_view payload {(char *) packet->data(), packet->data_size()};
       std::vector<uint8_t> payload_with_replacements;
@@ -1448,8 +1658,19 @@ namespace stream {
           }
 
           frame_fec_latency_logger.first_point_now();
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+          const auto perf_fec_start = perf_window ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point {};
+#endif
           // If video encryption is enabled, we allocate space for the encryption header before each shard
           auto shards = fec::encode(current_payload, blocksize, fecPercentage, session->config.minRequiredFecPackets, session->video.cipher ? sizeof(video_packet_enc_prefix_t) : 0);
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+          if (perf_window) {
+            perf_frame_fec_ms += perf_window_t::milliseconds(std::chrono::steady_clock::now() - perf_fec_start);
+            perf_frame_data_shards += shards.data_shards;
+            perf_frame_parity_shards += shards.size() - shards.data_shards;
+            perf_frame_wire_bytes += shards.size() * (shards.blocksize + shards.prefixsize);
+          }
+#endif
           frame_fec_latency_logger.second_point_now_and_log();
 
           auto peer_address = session->video.peer.address();
@@ -1529,6 +1750,11 @@ namespace stream {
                 auto now = std::chrono::steady_clock::now();
                 if (now < due) {
                   timer->sleep_for(due - now);
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+                  if (perf_window) {
+                    perf_frame_pacing_ms += perf_window_t::milliseconds(std::chrono::steady_clock::now() - now);
+                  }
+#endif
                 }
 
                 ratecontrol_group_packets_sent = 0;
@@ -1539,6 +1765,9 @@ namespace stream {
               batch_info.block_count = current_batch_size;
 
               frame_send_batch_latency_logger.first_point_now();
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+              const auto perf_send_start = perf_window ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point {};
+#endif
               // Use a batched send if it's supported on this platform
               if (!platf::send_batch(batch_info)) {
                 // Batched send is not available, so send each packet individually
@@ -1558,6 +1787,11 @@ namespace stream {
                   platf::send(send_info);
                 }
               }
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+              if (perf_window) {
+                perf_frame_send_ms += perf_window_t::milliseconds(std::chrono::steady_clock::now() - perf_send_start);
+              }
+#endif
               frame_send_batch_latency_logger.second_point_now_and_log();
 
               ratecontrol_group_packets_sent += current_batch_size;
@@ -1584,6 +1818,51 @@ namespace stream {
         });
 
         session->video.lowseq = lowseq;
+
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+        // LUMINA_STREAM_PERF_DIAGNOSTICS_BEGIN
+        if (perf_window) {
+          const auto frame_done = std::chrono::steady_clock::now();
+          const auto &timing = packet->perf_timing;
+
+          ++perf_window->output_frames;
+          perf_window->idr_frames += packet->is_idr() ? 1 : 0;
+          perf_window->payload_bytes += packet->data_size();
+          perf_window->wire_bytes += perf_frame_wire_bytes;
+          perf_window->data_shards += perf_frame_data_shards;
+          perf_window->parity_shards += perf_frame_parity_shards;
+          perf_window->fec_ms.add(perf_frame_fec_ms);
+          perf_window->pacing_ms.add(perf_frame_pacing_ms);
+          perf_window->send_ms.add(perf_frame_send_ms);
+          perf_window->network_ms.add(perf_window_t::milliseconds(frame_done - perf_frame_start));
+
+          if (timing.active) {
+            if (timing.capture && !timing.capture_repeated) {
+              ++perf_window->source_frames;
+              perf_window->capture_to_send_ms.add(perf_window_t::milliseconds(frame_done - *timing.capture));
+            } else {
+              ++perf_window->duplicate_frames;
+            }
+
+            if (timing.capture && perf_window_t::valid(timing.capture_dequeued)) {
+              perf_window->capture_queue_ms.add(perf_window_t::milliseconds(timing.capture_dequeued - *timing.capture));
+            }
+            if (perf_window_t::valid(timing.convert_start) && perf_window_t::valid(timing.convert_ready)) {
+              perf_window->convert_ms.add(perf_window_t::milliseconds(timing.convert_ready - timing.convert_start));
+            }
+            if (perf_window_t::valid(timing.encode_submit) && perf_window_t::valid(timing.encode_ready)) {
+              perf_window->encode_ms.add(perf_window_t::milliseconds(timing.encode_ready - timing.encode_submit));
+            }
+          } else if (perf_frame_had_capture_timestamp) {
+            ++perf_window->source_frames;
+          } else {
+            ++perf_window->duplicate_frames;
+          }
+
+          perf_window->report_and_reset(session, frame_done);
+        }
+        // LUMINA_STREAM_PERF_DIAGNOSTICS_END
+#endif
       } catch (const std::exception &e) {
         BOOST_LOG(error) << "Broadcast video failed "sv << e.what();
         std::this_thread::sleep_for(100ms);
