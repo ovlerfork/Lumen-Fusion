@@ -1262,8 +1262,9 @@ namespace video {
       // Common options
       // Note: max_ref_frames is intentionally omitted for H.264 because
       // VideoToolbox on Apple Silicon produces all-IDR output when
-      // ReferenceBufferCount=1 is set for H.264, causing massive frame drops.
-      // HEVC is unaffected and retains max_ref_frames=1.
+      // ReferenceBufferCount=1 is set for H.264, causing massive bandwidth
+      // inflation (~3x) and frame drops. HEVC and AV1 are unaffected and
+      // retain max_ref_frames=1. See LizardByte/Sunshine#5013.
       {
         {"allow_sw"s, &config::video.vt.vt_allow_sw},
         {"require_sw"s, &config::video.vt.vt_require_sw},

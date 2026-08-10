@@ -22,10 +22,14 @@
   NSMutableArray *result = [NSMutableArray array];
 
   for (uint32_t i = 0; i < count; i++) {
+    NSString *friendlyName = [self getDisplayName:displays[i]];
+    if (!friendlyName) {
+      friendlyName = [NSString stringWithFormat:@"Display %u", displays[i]];
+    }
     [result addObject:@{
       @"id": [NSNumber numberWithUnsignedInt:displays[i]],
       @"name": [NSString stringWithFormat:@"%d", displays[i]],
-      @"displayName": [self getDisplayName:displays[i]],
+      @"displayName": friendlyName,
     }];
   }
 
