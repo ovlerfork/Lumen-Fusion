@@ -285,6 +285,20 @@ cat > "$INSTALL_DIR/hid_entitlements.plist" << 'PLIST'
 </plist>
 PLIST
 
+# Sign the binaries for gamepad support (only if AMFI is disabled).
+# With AMFI enabled, restricted entitlements cause macOS to kill the process.
+# Signing here rather than on every launch keeps the ad-hoc cdhash stable, which
+# is what the Screen Recording TCC grant is keyed to.
+if nvram boot-args 2>/dev/null | grep -q "amfi_get_out_of_my_way=1"; then
+    codesign --sign - --entitlements "$INSTALL_DIR/hid_entitlements.plist" --force "$INSTALL_DIR/lumina" 2>/dev/null
+    # vd_helper needs no HID entitlement, but ad-hoc signing is required for
+    # unsigned binaries when AMFI is disabled.
+    if [ -f "$INSTALL_DIR/vd_helper" ]; then
+        codesign --sign - --force "$INSTALL_DIR/vd_helper" 2>/dev/null
+    fi
+    ok "Signed binaries for gamepad support"
+fi
+
 # Copy example launch scripts without replacing local customizations.
 if [ -d "$LUMINA_DIR/scripts" ]; then
     cp -n "$LUMINA_DIR/scripts/"*.sh "$CONFIG_DIR/scripts/" 2>/dev/null || true
@@ -380,7 +394,6 @@ fi
 cat > "$BIN_DIR/lumina" << 'LAUNCHER'
 #!/bin/bash
 INSTALL_DIR="$HOME/.local/share/lumina"
-ENTITLEMENTS="$INSTALL_DIR/hid_entitlements.plist"
 BINARY="$INSTALL_DIR/lumina"
 
 YELLOW='\033[1;33m'
@@ -393,23 +406,8 @@ if [ "${1:-}" = "--creds" ]; then
     exit $?
 fi
 
-# Sign the binary for gamepad support (only if AMFI is disabled).
-# With AMFI enabled, restricted entitlements cause macOS to kill the process.
-# Check AMFI status by looking at boot-args.
-AMFI_OFF=false
-if nvram boot-args 2>/dev/null | grep -q "amfi_get_out_of_my_way=1"; then
-    AMFI_OFF=true
-fi
-
-if [ "$AMFI_OFF" = true ] && [ -f "$ENTITLEMENTS" ] && [ -f "$BINARY" ]; then
-    codesign --sign - --entitlements "$ENTITLEMENTS" --force "$BINARY" 2>/dev/null
-    # Also sign vd_helper (virtual display helper) — no HID entitlement needed,
-    # but ad-hoc signing is required for unsigned binaries when AMFI is disabled.
-    VD_HELPER="$INSTALL_DIR/vd_helper"
-    if [ -f "$VD_HELPER" ]; then
-        codesign --sign - --force "$VD_HELPER" 2>/dev/null
-    fi
-fi
+# Binaries are signed at install time (see install.sh / dev.sh), not here —
+# re-signing on every launch churns the ad-hoc cdhash that TCC grants key to.
 
 # First-run permission guide.
 # Use a flag file since TCC.db queries are unreliable on newer macOS versions.

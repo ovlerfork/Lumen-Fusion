@@ -35,5 +35,11 @@ cp -f build/vd_helper "$INSTALL_DIR/vd_helper"
 cp -f hid_entitlements.plist "$INSTALL_DIR/hid_entitlements.plist"
 cp -Rf build/assets/. "$INSTALL_DIR/assets/"
 
-codesign --sign - --entitlements "$INSTALL_DIR/hid_entitlements.plist" --force "$INSTALL_DIR/lumina"
-codesign --sign - --force "$INSTALL_DIR/vd_helper"
+# Sign for gamepad support only if AMFI is disabled. With AMFI enabled, the
+# restricted HID entitlement causes macOS to kill the process on launch.
+if nvram boot-args 2>/dev/null | grep -q "amfi_get_out_of_my_way=1"; then
+  codesign --sign - --entitlements "$INSTALL_DIR/hid_entitlements.plist" --force "$INSTALL_DIR/lumina"
+  codesign --sign - --force "$INSTALL_DIR/vd_helper"
+else
+  echo "AMFI is enabled — skipping code signing (gamepad support unavailable)."
+fi
