@@ -123,6 +123,37 @@ Validation completed:
    virtual display, cursor recovery, and reconnect behavior as explicit
    invariants.
 
+#### Phase 2 review checkpoint
+
+Implemented on 2026-08-10 and left uncommitted for review. All five listed
+upstream changes are represented semantically:
+
+- `3ee4144a` was already functionally present in Lumina. The upstream
+  VideoToolbox rationale is now canonical while Lumina's configurable
+  `MaxFrameDelayCount`, IDR coalescing, timestamps, and conditional performance
+  diagnostics remain intact.
+- `be18f2f3` and `07317293` are ported into Lumina's Objective-C++ input backend,
+  preserving HID gamepads, virtual-display coordinates, and cursor behavior.
+- `c9863ebe` is combined with Lumina's broader session power lifecycle. Display
+  wake happens before probing, while Lumina remains the single owner of every
+  short-lived and session-lifetime IOPM assertion.
+- The `fbafc497` physical-display consumer behavior is ported with
+  virtual-display-first selection. Capture prefers libdisplaydevice enumeration
+  when available and falls back to CoreGraphics/AVFoundation with the current
+  dependency snapshot. Updating that snapshot to activate its macOS backend is
+  intentionally deferred to Phase 5 as an isolated dependency change.
+
+Validation completed:
+
+- Release `sunshine` and `test_sunshine` targets built successfully with
+  `BUILD_DOCS=OFF` and performance diagnostics disabled; the production Web UI
+  also built successfully.
+- 154 of 154 focused display-device and encoder tests passed.
+- 324 of 324 enabled broader unit tests passed. Two documentation-consistency
+  tests and four live macOS mouse tests retain the same Phase 1 exclusions.
+- `git diff --check` passed, and no vendored dependency or unsupported-platform
+  file changed.
+
 ### Phase 3: configuration, Web API, and Web UI
 
 Port the backend and frontend together so the UI never expects a missing API:
@@ -144,6 +175,35 @@ Retain these Lumina settings and behaviors:
 - `max_bitrate` and hot reload behavior.
 - Developer-only `streaming_performance_logging`, with no Web UI control.
 - Lumina product name, links, icons, config paths, and credentials migration.
+
+#### Phase 3 review checkpoint
+
+Implemented on 2026-08-10 and left uncommitted for review. The shared Web UI
+now follows the v2026.808 implementations for application search/sort,
+add/edit/delete modals, layout and theme consistency, the dynamic client
+directory, and the welcome/logout presentation. Automatic browser launch was
+removed from the service command path as in `a84735d1`.
+
+The frontend dependency set now matches `v2026.808.164219`, including the
+`lucide-vue-next` to `@lucide/vue` migration. All upstream locale snapshots were
+imported and product references were rebranded to Lumina. Lumina's release
+endpoint, repository links, assets, virtual-display setting, VideoToolbox
+maximum-frame-delay setting, and macOS-only encoder filtering remain in place.
+The developer-only `streaming_performance_logging` key remains absent from the
+UI and locale files; because the configuration page saves the full fetched
+configuration object, an existing secret value is retained when other settings
+are saved.
+
+Validation completed:
+
+- Clean production Vite build of all nine Web UI pages.
+- Release `sunshine` and `test_sunshine` targets built successfully.
+- 36 focused configuration, locale, and Web API tests passed.
+- 324 of 324 enabled broader unit tests passed. The two missing-documentation
+  consistency tests and four live macOS mouse tests retain the same exclusions
+  documented in prior phases.
+- `git diff --check` passed, direct npm dependency versions are valid, and no
+  vendored dependency or unsupported-platform file changed.
 
 ### Phase 4: logging, tray, packaging, and build system
 
