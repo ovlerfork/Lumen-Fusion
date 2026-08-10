@@ -68,6 +68,14 @@ cd Lumina
 > [!NOTE]
 > If you already cloned the repository without `--recurse-submodules`, run `git submodule update --init --recursive` inside the directory before running the install script.
 
+> [!TIP]
+> `third-party/build-deps` exists only to pin the FFmpeg release that gets downloaded as prebuilt binaries; its own nested FFmpeg, x264, x265, SVT-AV1, and Vulkan sources (~1.4 GB) are never compiled on macOS. To skip them, clone without `--recurse-submodules` and run:
+>
+> ```bash
+> git submodule update --init --recursive -- ':(exclude)third-party/build-deps'
+> git submodule update --init third-party/build-deps
+> ```
+
 To copy an existing Sunshine configuration, including Web UI credentials,
 certificates, applications, and Moonlight pairings, use:
 

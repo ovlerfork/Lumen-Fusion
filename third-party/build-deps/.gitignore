@@ -1,7 +1,0 @@
-# Distribution / packaging
-build/
-cmake-*/
-dist/
-
-# JetBrains project folder
-.idea/
