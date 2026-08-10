@@ -18,8 +18,38 @@ if(NOT DEFINED FFMPEG_PREPARED_BINARIES)
     # Determine download location
     set(FFMPEG_DOWNLOAD_DIR "${CMAKE_BINARY_DIR}/_deps")
 
-    # Explicitly tracked Lumina FFmpeg release value
-    set(FFMPEG_RELEASE_TAG "v2026.724.203728" CACHE STRING "Pinned FFmpeg release tag for build-deps")
+    # Fetch tags for the build-deps submodule so tag lookups work in CI shallow clones
+    execute_process(
+        COMMAND git -C "${CMAKE_SOURCE_DIR}/third-party/build-deps" fetch --tags --depth=1
+        OUTPUT_QUIET
+        ERROR_QUIET
+    )
+
+    # Get the current commit/tag from the build-deps submodule
+    execute_process(
+        COMMAND git -C "${CMAKE_SOURCE_DIR}/third-party/build-deps" describe --tags --exact-match
+        OUTPUT_VARIABLE FFMPEG_RELEASE_TAG
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+
+    # If no exact tag match, try to get the commit hash and look for a tag
+    if(NOT FFMPEG_RELEASE_TAG)
+        execute_process(
+            COMMAND git -C "${CMAKE_SOURCE_DIR}/third-party/build-deps" rev-parse HEAD
+            OUTPUT_VARIABLE BUILD_DEPS_COMMIT
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+
+        # Try to find a tag that points to this commit
+        execute_process(
+            COMMAND git -C "${CMAKE_SOURCE_DIR}/third-party/build-deps" tag --points-at ${BUILD_DEPS_COMMIT}
+            OUTPUT_VARIABLE FFMPEG_RELEASE_TAG
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+    endif()
 
     # Set GitHub release URL
     set(FFMPEG_GITHUB_REPO "LizardByte/build-deps")
@@ -106,12 +136,14 @@ else()
     message(STATUS "Using user-specified FFmpeg binaries at ${FFMPEG_PREPARED_BINARIES}")
 
     # Set platform-specific libraries
-    if(WIN32)
-        set(FFMPEG_PLATFORM_LIBRARIES mfplat ole32 strmiids mfuuid vpl)
-    elseif(FREEBSD)
-        set(FFMPEG_PLATFORM_LIBRARIES va va-drm va-x11 X11)
-    elseif(UNIX AND NOT APPLE)
-        set(FFMPEG_PLATFORM_LIBRARIES numa va va-drm va-x11 X11)
+    if(NOT DEFINED FFMPEG_PLATFORM_LIBRARIES)
+        if(WIN32)
+            set(FFMPEG_PLATFORM_LIBRARIES mfplat ole32 strmiids mfuuid vpl)
+        elseif(FREEBSD)
+            set(FFMPEG_PLATFORM_LIBRARIES va va-drm va-x11 X11)
+        elseif(UNIX AND NOT APPLE)
+            set(FFMPEG_PLATFORM_LIBRARIES numa va va-drm va-x11 X11)
+        endif()
     endif()
 
     # Set base FFmpeg libraries (always required)
