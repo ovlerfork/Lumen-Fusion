@@ -60,10 +60,13 @@ Upstream Sunshine has significant issues on macOS:
 ## Quick Install
 
 ```bash
-git clone https://github.com/jayl-dev/Lumina.git
+git clone --recurse-submodules https://github.com/jayl-dev/Lumina.git
 cd Lumina
 ./install.sh
 ```
+
+> [!NOTE]
+> If you already cloned the repository without `--recurse-submodules`, run `git submodule update --init --recursive` inside the directory before running the install script.
 
 To copy an existing Sunshine configuration, including Web UI credentials,
 certificates, applications, and Moonlight pairings, use:
@@ -320,6 +323,7 @@ brew install cmake boost pkg-config openssl@3 opus llvm doxygen graphviz node ic
 
 ```bash
 cd Lumina
+git submodule update --init --recursive
 
 # Detect macOS SDK path
 SDK_PATH=$(xcrun --show-sdk-path)
