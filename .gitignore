@@ -1,5 +1,6 @@
 # Build artifacts
 build/
+build-macos-zip/
 node_modules/
 
 # macOS
