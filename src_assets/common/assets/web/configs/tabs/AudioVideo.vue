@@ -75,6 +75,17 @@ const config = ref(props.config)
           </select>
           <div class="form-text">{{ $t('config.virtual_display_desc') }}</div>
         </div>
+
+        <!-- Virtual Display Layout -->
+        <div class="mb-3" v-if="config.virtual_display === 'enabled'">
+          <label for="virtual_display_layout" class="form-label">{{ $t('config.virtual_display_layout') }}</label>
+          <select class="form-select" id="virtual_display_layout" v-model="config.virtual_display_layout">
+            <option value="extend">Extend</option>
+            <option value="mirror">Mirror</option>
+            <option value="system">Use system setting</option>
+          </select>
+          <div class="form-text">{{ $t('config.virtual_display_layout_desc') }}</div>
+        </div>
       </template>
     </PlatformLayout>
 

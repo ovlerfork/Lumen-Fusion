@@ -475,8 +475,10 @@ const KeyCodeMap kKeyCodesMap[] = {
     const auto macos_input = static_cast<macos_input_t *>(input.get());
     const auto event = macos_input->mouse_event;
 
-    // Use virtual display if active, otherwise configured display
-    auto vd_id = virtual_display_get_id();
+    // Use virtual display if active, otherwise configured display.
+    // Resolves to the mirror master when the virtual display is mirrored, so
+    // the bounds we clamp to match the display actually being captured.
+    auto vd_id = virtual_display_get_target_id();
     auto display = vd_id ? (CGDirectDisplayID)vd_id : macos_input->display;
 
     // get display bounds for current display
@@ -547,7 +549,8 @@ const KeyCodeMap kKeyCodesMap[] = {
     const auto scaling = macos_input->displayScaling;
 
     // Use virtual display if one is active, otherwise use configured display
-    auto vd_id = virtual_display_get_id();
+    // (resolves to the mirror master while the virtual display is mirrored).
+    auto vd_id = virtual_display_get_target_id();
     const auto display = vd_id ? (CGDirectDisplayID)vd_id : macos_input->display;
 
     auto location = util::point_t {x * scaling, y * scaling};

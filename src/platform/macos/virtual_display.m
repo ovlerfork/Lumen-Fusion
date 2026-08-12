@@ -40,8 +40,12 @@ static NSString *helperPath(void) {
   return [dir stringByAppendingPathComponent:@"vd_helper"];
 }
 
-uint32_t virtual_display_create(int width, int height, int fps) {
+uint32_t virtual_display_create(int width, int height, int fps, const char *layout) {
   pthread_mutex_lock(&vd_mutex);
+
+  if (!layout || !*layout) {
+    layout = "extend";
+  }
 
   // Destroy existing display first
   if (vd_helper_pid > 0) {
@@ -67,7 +71,7 @@ uint32_t virtual_display_create(int width, int height, int fps) {
     return 0;
   }
 
-  NSLog(@"[Sunshine] Spawning vd_helper: %@ %d %d %d", helper, width, height, fps);
+  NSLog(@"[Sunshine] Spawning vd_helper: %@ %d %d %d %s", helper, width, height, fps, layout);
 
   // Set up pipe for reading displayID from child's stdout
   int pipefd[2];
@@ -88,6 +92,7 @@ uint32_t virtual_display_create(int width, int height, int fps) {
     widthStr,
     heightStr,
     fpsStr,
+    layout,
     NULL
   };
 
@@ -163,8 +168,11 @@ uint32_t virtual_display_create(int width, int height, int fps) {
     for (uint32_t i = 0; i < displayCount; i++) {
       if (activeDisplays[i] == displayID) { found = YES; break; }
     }
-    NSLog(@"[Sunshine] Parent sees display %u: %@ in CGGetActiveDisplayList (%u total)",
-          displayID, found ? @"FOUND" : @"NOT found", displayCount);
+    // A mirror slave is legitimately absent from the active list — capture
+    // falls back to the mirror master (see virtual_display_get_target_id).
+    NSLog(@"[Sunshine] Parent sees display %u: %@ in CGGetActiveDisplayList (%u total, mirrors=%u)",
+          displayID, found ? @"FOUND" : @"NOT found", displayCount,
+          CGDisplayMirrorsDisplay(displayID));
   }
 
   pthread_mutex_unlock(&vd_mutex);
@@ -199,4 +207,19 @@ uint32_t virtual_display_get_id(void) {
   uint32_t result = vd_display_id;
   pthread_mutex_unlock(&vd_mutex);
   return result;
+}
+
+uint32_t virtual_display_get_target_id(void) {
+  uint32_t id = virtual_display_get_id();
+  if (id == 0) {
+    return 0;
+  }
+
+  // While mirrored, the virtual display is not in the active list and has no
+  // usable bounds; the master shows the identical content, so target that.
+  CGDirectDisplayID master = CGDisplayMirrorsDisplay(id);
+  if (master != kCGNullDirectDisplay && master != id) {
+    return (uint32_t)master;
+  }
+  return id;
 }

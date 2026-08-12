@@ -850,9 +850,11 @@ namespace platf {
    * @param width Display width in pixels.
    * @param height Display height in pixels.
    * @param fps Refresh rate in Hz.
+   * @param layout Desired arrangement: "extend", "mirror", or "system" (leave the
+   *               mirror state to the OS's persisted configuration).
    * @return The display ID of the created display, or 0 on failure.
    */
-  std::uint32_t virtual_display_create(int width, int height, int fps);
+  std::uint32_t virtual_display_create(int width, int height, int fps, const std::string &layout);
 
   /**
    * @brief Destroy the currently active virtual display.
@@ -864,6 +866,17 @@ namespace platf {
    * @return The display ID, or 0 if no virtual display is active.
    */
   std::uint32_t virtual_display_get_id();
+
+  /**
+   * @brief Get the display ID that capture and input should target.
+   *
+   * Usually the virtual display itself, but resolves to the mirror master when
+   * the virtual display is mirroring another display (a mirror slave cannot be
+   * captured directly).
+   *
+   * @return A capturable display ID, or 0 if no virtual display is active.
+   */
+  std::uint32_t virtual_display_get_target_id();
 
 #define SERVICE_NAME "Sunshine"
 #define SERVICE_TYPE "_nvstream._tcp"

@@ -429,6 +429,8 @@
     "vk_tune_ull": "Ultra Low Latency (ull)",
     "virtual_display": "Virtual Display (macOS only)",
     "virtual_display_desc": "Create an on-demand virtual display for streaming. Disabled by default.",
+    "virtual_display_layout": "Virtual Display Layout (macOS only)",
+    "virtual_display_layout_desc": "How the virtual display is arranged relative to your existing displays. Extend gives the stream its own desktop. Mirror makes it show the same content as the main display, and the stream captures the mirrored content. Use system setting leaves the arrangement to macOS, so a choice you make in System Settings > Displays is remembered across sessions.",
     "virtual_sink": "Virtual Sink",
     "virtual_sink_desc": "Manually specify a virtual audio device to use. If unset, the device is chosen automatically. We strongly recommend leaving this field blank to use automatic device selection!",
     "virtual_sink_placeholder": "Steam Streaming Speakers",

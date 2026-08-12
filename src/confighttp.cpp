@@ -1067,6 +1067,8 @@ namespace confighttp {
         // hot-reload specific configurations that take effect on next stream
         if (k == "virtual_display" && v.is_string()) {
           config::video.virtual_display = v.get<std::string>();
+        } else if (k == "virtual_display_layout" && v.is_string()) {
+          config::video.virtual_display_layout = v.get<std::string>();
         } else if (k == "audio_sink" && v.is_string()) {
           config::audio.sink = v.get<std::string>();
         } else if (k == "max_bitrate") {

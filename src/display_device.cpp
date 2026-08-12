@@ -805,9 +805,15 @@ namespace display_device {
   void create_virtual_display([[maybe_unused]] const config::video_t &video_config, [[maybe_unused]] const rtsp_stream::launch_session_t &session) {
 #ifdef __APPLE__
     if (video_config.virtual_display == "enabled" && session.width > 0 && session.height > 0 && session.fps > 0) {
-      auto vd_id = platf::virtual_display_create(session.width, session.height, session.fps);
+      auto layout = video_config.virtual_display_layout;
+      if (layout != "extend" && layout != "mirror" && layout != "system") {
+        BOOST_LOG(warning) << "Unknown virtual_display_layout '" << layout << "', falling back to 'extend'";
+        layout = "extend";
+      }
+
+      auto vd_id = platf::virtual_display_create(session.width, session.height, session.fps, layout);
       if (vd_id != 0) {
-        BOOST_LOG(info) << "Created virtual display " << vd_id << " (" << session.width << "x" << session.height << "@" << session.fps << "Hz)";
+        BOOST_LOG(info) << "Created virtual display " << vd_id << " (" << session.width << "x" << session.height << "@" << session.fps << "Hz, layout: " << layout << ")";
         // Give the window server time to register the display before capture
         std::this_thread::sleep_for(5s);
       } else {

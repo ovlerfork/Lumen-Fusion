@@ -3,14 +3,26 @@
  * @brief Helper process to create and hold a CGVirtualDisplay.
  *
  * Spawned by Sunshine to create virtual displays in a clean process context.
- * Usage: vd_helper <width> <height> <fps>
+ * Usage: vd_helper <width> <height> <fps> [layout]
+ *   layout: "extend" (default), "mirror", or "system"
  * Outputs: displayID on stdout (or "0" on failure)
  * Stays alive holding the display until SIGTERM is received.
  *
  * CGVirtualDisplay creates the display object, then we:
  *   1. SLSConfigureDisplayEnabled activates it in WindowServer's display list
- *   2. CGConfigureDisplayMirrorOfDisplay(kCGNullDirectDisplay) forces extend mode
- *      (macOS may auto-mirror new displays, hiding them from CGGetActiveDisplayList)
+ *   2. Apply the requested layout:
+ *      - extend: CGConfigureDisplayMirrorOfDisplay(kCGNullDirectDisplay) forces
+ *        extend mode (macOS may auto-mirror new displays, hiding them from
+ *        CGGetActiveDisplayList)
+ *      - mirror: mirror the main display
+ *      - system: leave the mirror state alone, so WindowServer's persisted
+ *        arrangement for this display identity (set in System Settings) applies
+ *
+ * The descriptor's vendor/product/serial triple is fixed, not randomized:
+ * WindowServer keys its persisted per-display configuration (arrangement,
+ * mirror set, resolution) off that triple. A random serial would make macOS
+ * treat every session as a brand-new monitor and discard the saved layout.
+ *
  * Compiled with ARC (-fobjc-arc).
  */
 #import <Foundation/Foundation.h>
@@ -63,6 +75,20 @@ static CGVirtualDisplay *keepAlive = nil;
 static CGVirtualDisplayDescriptor *keepDesc = nil;
 
 static volatile sig_atomic_t shouldExit = 0;
+
+// Requested display layout, from argv[4].
+typedef enum {
+  VD_LAYOUT_EXTEND = 0,  // force extend (un-mirror)
+  VD_LAYOUT_MIRROR,      // force mirroring of the main display
+  VD_LAYOUT_SYSTEM       // leave whatever WindowServer restored
+} vd_layout_t;
+
+// Fixed EDID identity. WindowServer persists per-display settings (arrangement,
+// mirror set, resolution) keyed off vendor/product/serial, so these must be
+// stable across runs for the user's System Settings choice to survive a reconnect.
+static const unsigned int kVendorID = 0xF0F0;
+static const unsigned int kProductID = 0x5678;
+static const unsigned int kSerialNum = 0x53554E31;  // 'SUN1'
 
 static void handle_signal(int sig) {
   shouldExit = 1;
@@ -150,9 +176,47 @@ static void forceExtendMode(CGDirectDisplayID virtualID) {
   }
 }
 
+/**
+ * Put the virtual display into a mirror set with the main display.
+ * The virtual display becomes the mirror slave, so the main display keeps
+ * driving the mode and the two show identical content.
+ */
+static void forceMirrorMode(CGDirectDisplayID virtualID) {
+  CGDirectDisplayID mainDisplay = CGMainDisplayID();
+  if (mainDisplay == virtualID) {
+    fprintf(stderr, "[vd_helper] Virtual display is the main display, cannot mirror it to itself\n");
+    return;
+  }
+
+  if (CGDisplayMirrorsDisplay(virtualID) == mainDisplay) {
+    fprintf(stderr, "[vd_helper] Display %u already mirrors main %u\n", virtualID, mainDisplay);
+    return;
+  }
+
+  CGDisplayConfigRef config = NULL;
+  CGBeginDisplayConfiguration(&config);
+  if (!config) {
+    fprintf(stderr, "[vd_helper] CGBeginDisplayConfiguration failed, cannot mirror\n");
+    return;
+  }
+  CGError err = CGConfigureDisplayMirrorOfDisplay(config, virtualID, mainDisplay);
+  // kCGConfigureForSession so the mirror survives this helper's lifetime and is
+  // recorded by WindowServer against the display's (stable) identity.
+  CGError completeErr = CGCompleteDisplayConfiguration(config, kCGConfigureForSession);
+  fprintf(stderr, "[vd_helper] Mirror %u -> main %u: configure=%d complete=%d\n",
+          virtualID, mainDisplay, err, completeErr);
+}
+
+static vd_layout_t parseLayout(const char *s) {
+  if (!s) return VD_LAYOUT_EXTEND;
+  if (strcmp(s, "mirror") == 0) return VD_LAYOUT_MIRROR;
+  if (strcmp(s, "system") == 0) return VD_LAYOUT_SYSTEM;
+  return VD_LAYOUT_EXTEND;
+}
+
 int main(int argc, const char *argv[]) {
   @autoreleasepool {
-    if (argc != 4) {
+    if (argc != 4 && argc != 5) {
       fprintf(stdout, "0\n");
       fflush(stdout);
       return 1;
@@ -161,6 +225,7 @@ int main(int argc, const char *argv[]) {
     int width = atoi(argv[1]);
     int height = atoi(argv[2]);
     int fps = atoi(argv[3]);
+    vd_layout_t layout = parseLayout(argc == 5 ? argv[4] : NULL);
 
     if (width <= 0 || height <= 0 || fps <= 0) {
       fprintf(stdout, "0\n");
@@ -188,9 +253,9 @@ int main(int argc, const char *argv[]) {
     // Create display directly on main thread
     CGVirtualDisplayDescriptor *desc = [[CGVirtualDisplayDescriptor alloc] init];
     desc.name = @"Sunshine Virtual Display";
-    desc.vendorID = 0xF0F0;
-    desc.productID = 0x5678;
-    desc.serialNum = arc4random();
+    desc.vendorID = kVendorID;
+    desc.productID = kProductID;
+    desc.serialNum = kSerialNum;
     desc.maxPixelsWide = (unsigned int)width;
     desc.maxPixelsHigh = (unsigned int)height;
     // Fixed 27" monitor physical size — do NOT scale linearly with resolution.
@@ -280,17 +345,33 @@ int main(int argc, const char *argv[]) {
     // Wait for WindowServer to process the display
     usleep(500000); // 500ms
 
-    // Step 2: Force extend mode (un-mirror) if needed
-    if (CGDisplayIsInMirrorSet(resultID) || CGDisplayMirrorsDisplay(resultID) != 0) {
-      fprintf(stderr, "[vd_helper] Mirror detected, forcing extend mode\n");
-      forceExtendMode(resultID);
+    // Step 2: Apply the requested layout
+    switch (layout) {
+      case VD_LAYOUT_EXTEND:
+        if (CGDisplayIsInMirrorSet(resultID) || CGDisplayMirrorsDisplay(resultID) != 0) {
+          fprintf(stderr, "[vd_helper] Mirror detected, forcing extend mode\n");
+          forceExtendMode(resultID);
+        }
+        break;
+      case VD_LAYOUT_MIRROR:
+        forceMirrorMode(resultID);
+        break;
+      case VD_LAYOUT_SYSTEM:
+        fprintf(stderr, "[vd_helper] Layout 'system': leaving mirror state as WindowServer restored it "
+                        "(inMirrorSet=%d, mirrors=%u)\n",
+                CGDisplayIsInMirrorSet(resultID), CGDisplayMirrorsDisplay(resultID));
+        break;
     }
 
     // Step 3: Switch to native resolution (1x scale) mode.
     // The display starts as retina 2x (logical=half, pixel=full).
     // For streaming, we want native 1x (logical=full, pixel=full) to avoid
     // compositor overhead that causes latency and FPS drops.
-    {
+    // Skipped while mirrored: the mirror master drives the mode, and setting a
+    // mode on the slave would just tear the mirror set down.
+    if (CGDisplayIsInMirrorSet(resultID)) {
+      fprintf(stderr, "[vd_helper] Display %u is mirrored, leaving mode to the mirror master\n", resultID);
+    } else {
       NSDictionary *opts = @{(NSString *)kCGDisplayShowDuplicateLowResolutionModes: @YES};
       CFArrayRef allModes = CGDisplayCopyAllDisplayModes(resultID, (CFDictionaryRef)opts);
       if (allModes) {
@@ -321,10 +402,12 @@ int main(int argc, const char *argv[]) {
     // Wait for mode switch to take effect
     usleep(500000); // 500ms
 
-    // Step 3: If still not visible, try again after a longer wait
+    // Step 4: If still not visible, try again after a longer wait.
+    // A mirror slave is legitimately absent from the active list, so only retry
+    // (which un-mirrors) when we actually asked for extend mode.
     uint32_t count = 0;
     BOOL found = checkDisplayInList(resultID, &count);
-    if (!found) {
+    if (!found && layout == VD_LAYOUT_EXTEND) {
       fprintf(stderr, "[vd_helper] Display %u not found after first attempt, retrying...\n", resultID);
       sleep(1);
       // Check mirror state again

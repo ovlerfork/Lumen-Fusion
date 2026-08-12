@@ -354,10 +354,18 @@ namespace platf {
 
     CGDirectDisplayID selected_display_id;
 
-    // Check if a virtual display is active — use it preferentially
-    auto vd_id = platf::virtual_display_get_id();
+    // Check if a virtual display is active — use it preferentially.
+    // While the virtual display is mirroring another display it cannot be
+    // captured directly, so this resolves to the mirror master instead.
+    auto vd_id = platf::virtual_display_get_target_id();
     if (vd_id != 0) {
-      BOOST_LOG(info) << "Using virtual display (id: "sv << vd_id << ") for capture"sv;
+      auto created_id = platf::virtual_display_get_id();
+      if (vd_id != created_id) {
+        BOOST_LOG(info) << "Virtual display "sv << created_id << " is mirroring display "sv << vd_id
+                        << "; capturing the mirror master instead"sv;
+      } else {
+        BOOST_LOG(info) << "Using virtual display (id: "sv << vd_id << ") for capture"sv;
+      }
       selected_display_id = (CGDirectDisplayID) vd_id;
     } else {
       // Default to main display

@@ -376,8 +376,8 @@ namespace platf {
     BOOST_LOG(info) << "Released macOS streaming power assertions"sv;
   }
 
-  std::uint32_t virtual_display_create(int width, int height, int fps) {
-    return ::virtual_display_create(width, height, fps);
+  std::uint32_t virtual_display_create(int width, int height, int fps, const std::string &layout) {
+    return ::virtual_display_create(width, height, fps, layout.c_str());
   }
 
   void virtual_display_destroy() {
@@ -386,6 +386,10 @@ namespace platf {
 
   std::uint32_t virtual_display_get_id() {
     return ::virtual_display_get_id();
+  }
+
+  std::uint32_t virtual_display_get_target_id() {
+    return ::virtual_display_get_target_id();
   }
 
   int restart_process() {
