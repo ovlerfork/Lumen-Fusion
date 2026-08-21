@@ -4,9 +4,17 @@
     alt="Lumina icon"
     width="256"
   />
+
   <h1 align="center">LUMINA</h1>
   <h4 align="center">Native macOS game streaming, built for Apple Silicon.</h4>
-</div>
+    <img
+    src="lumina.png"
+    alt="screenshot"
+    width="512"
+  />
+</div
+
+  
 
 Lumina is a fork of [Lumen](https://github.com/trollzem/Lumen) (originally [Sunshine](https://github.com/LizardByte/Sunshine)) that fixes macOS support from the ground up. Stream your Mac's display to any [Moonlight](https://moonlight-stream.org/) client — TV, phone, tablet, another PC — with native system audio, automatic virtual display management, and hardware-accelerated encoding.
 
