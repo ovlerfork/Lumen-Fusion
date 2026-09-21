@@ -1,4 +1,4 @@
-name: macOS portable artifact
+name: macOS native app artifact
 
 on:
   workflow_dispatch:
@@ -18,6 +18,8 @@ jobs:
     env:
       BUILD_VERSION: 0.0.${{ github.run_number }}
     steps:
+      - name: Initialize diagnostics
+        run: echo "DIAGNOSTICS=${RUNNER_TEMP}/native-validation-diagnostics" >> "$GITHUB_ENV"
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
@@ -43,37 +45,50 @@ jobs:
           # Lumen intentionally removed docs/configuration.md when it became macOS-only.
           # Keep the three remaining ConfigConsistency tests and all runtime/unit tests,
           # but exclude the two Sunshine documentation-consistency checks that require it.
-          ./test_sunshine --gtest_filter=-ConfigConsistencyTest.AllConfigOptionsExistInAllFiles:ConfigConsistencyTest.ConfigTabsMatchDocumentationSections
+          mkdir -p "$DIAGNOSTICS"
+          ./test_sunshine --gtest_output="xml:$DIAGNOSTICS/gtest.xml" --gtest_filter=-ConfigConsistencyTest.AllConfigOptionsExistInAllFiles:ConfigConsistencyTest.ConfigTabsMatchDocumentationSections
       - name: Package
         run: |
           bash scripts/macos_build.sh --step=zip
           bash scripts/macos_build.sh --step=dmg
       - name: Validate extracted ZIP
         run: |
-          extracted="${RUNNER_TEMP}/portable runtime"
-          mkdir -p "$extracted"
+          extracted="$(mktemp -d "${RUNNER_TEMP}/native ZIP.XXXXXX")"
           ditto -x -k build-macos-zip/cpack_artifacts/Lumina.zip "$extracted"
-          validation_home="$(mktemp -d "${RUNNER_TEMP}/zip home.XXXXXX")"
-          bash scripts/validate-macos-package.sh "$extracted/Lumina" "$validation_home"
-      - name: Validate mounted DMG and detached installation
+          bash scripts/validate-macos-package.sh "$extracted/Lumen Fusion.app" "$DIAGNOSTICS/zip"
+      - name: Validate detached DMG installation
         run: |
           dmg="${PWD}/build-macos-zip/cpack_artifacts/Lumina.dmg"
-          mount_point="${RUNNER_TEMP}/mounted Lumen Fusion"
-          validation_home="$(mktemp -d "${RUNNER_TEMP}/dmg home.XXXXXX")"
-          mkdir -p "$mount_point"
+          mount_point="$(mktemp -d "${RUNNER_TEMP}/mounted Lumen Fusion.XXXXXX")"
+          installation="$(mktemp -d "${RUNNER_TEMP}/native installation.XXXXXX")/Applications"
+          mkdir -p "$installation" "$DIAGNOSTICS/dmg"
+          exec > >(tee "$DIAGNOSTICS/dmg/install.log") 2>&1
+          attached=false
           cleanup() {
-            if mount | grep -Fq " on $mount_point ("; then
+            if "$attached"; then
               hdiutil detach "$mount_point"
             fi
           }
           trap cleanup EXIT
           hdiutil verify "$dmg"
           hdiutil attach -readonly -nobrowse -mountpoint "$mount_point" "$dmg"
-          bash scripts/validate-macos-package.sh "$mount_point" "$validation_home"
+          attached=true
+          test -L "$mount_point/Applications"
+          test "$(readlink "$mount_point/Applications")" = /Applications
+          ditto "$mount_point/Lumen Fusion.app" "$installation/Lumen Fusion.app"
           hdiutil detach "$mount_point"
+          attached=false
           trap - EXIT
-          cd "$RUNNER_TEMP"
-          env HOME="$validation_home" PATH="${validation_home}/.local/bin:${PATH}" lumen-fusion --help
+          bash scripts/validate-macos-package.sh "$installation/Lumen Fusion.app" "$DIAGNOSTICS/dmg"
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lumen-fusion-native-failure-diagnostics
+          path: |
+            ${{ env.DIAGNOSTICS }}/**/*.log
+            ${{ env.DIAGNOSTICS }}/gtest.xml
+          if-no-files-found: warn
       - name: Upload validated ZIP and DMG
         uses: actions/upload-artifact@v4
         with:
