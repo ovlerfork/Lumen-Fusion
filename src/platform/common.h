@@ -579,6 +579,14 @@ namespace platf {
 
   std::filesystem::path appdata();
 
+#ifdef SUNSHINE_MACOS_BUNDLE
+  std::filesystem::path assets();
+#else
+  inline std::filesystem::path assets() {
+    return SUNSHINE_ASSETS_DIR;
+  }
+#endif
+
   std::string get_mac_address(const std::string_view &address);
 
   std::string from_sockaddr(const sockaddr *const);

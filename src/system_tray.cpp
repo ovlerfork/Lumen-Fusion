@@ -19,10 +19,10 @@
     #define TRAY_ICON_PAUSING SUNSHINE_TRAY_PREFIX "-pausing"
     #define TRAY_ICON_LOCKED SUNSHINE_TRAY_PREFIX "-locked"
   #elif defined(__APPLE__) || defined(__MACH__)
-    #define TRAY_ICON WEB_DIR "images/logo-sunshine-16.png"
-    #define TRAY_ICON_PLAYING WEB_DIR "images/sunshine-playing-16.png"
-    #define TRAY_ICON_PAUSING WEB_DIR "images/sunshine-pausing-16.png"
-    #define TRAY_ICON_LOCKED WEB_DIR "images/sunshine-locked-16.png"
+    #define TRAY_ICON tray_icon_path.c_str()
+    #define TRAY_ICON_PLAYING tray_icon_playing_path.c_str()
+    #define TRAY_ICON_PAUSING tray_icon_pausing_path.c_str()
+    #define TRAY_ICON_LOCKED tray_icon_locked_path.c_str()
     #include <dispatch/dispatch.h>
   #endif
 
@@ -51,6 +51,13 @@ using namespace std::literals;
 
 // system_tray namespace
 namespace system_tray {
+  #if defined(__APPLE__) || defined(__MACH__)
+  static const std::string tray_icon_path = std::string(WEB_DIR) + "images/logo-sunshine-16.png";
+  static const std::string tray_icon_playing_path = std::string(WEB_DIR) + "images/sunshine-playing-16.png";
+  static const std::string tray_icon_pausing_path = std::string(WEB_DIR) + "images/sunshine-pausing-16.png";
+  static const std::string tray_icon_locked_path = std::string(WEB_DIR) + "images/sunshine-locked-16.png";
+  #endif
+
   static std::atomic tray_initialized = false;
 
   void tray_open_ui_cb([[maybe_unused]] struct tray_menu *item) {

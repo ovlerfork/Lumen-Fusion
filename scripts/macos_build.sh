@@ -22,7 +22,7 @@ required_formulas=(
 function _usage() {
   local exit_code=$1
   cat <<EOF
-Build and package Lumina as a portable macOS command-line ZIP and DMG.
+Build and package Lumen Fusion.app for macOS as a ZIP and DMG.
 
 Usage: $0 [options]
 
@@ -34,9 +34,8 @@ Options:
   --build-docs             Build documentation.
   --build-tests            Build tests.
 
-Each package contains lumina, vd_helper, assets, the Qt tray runtime, and
-hid_entitlements.plist. Its runtime receives only ordinary ad-hoc signatures;
-users opt into the restricted HID entitlement by re-signing locally.
+Each package contains Lumen Fusion.app and LICENSE. Drag the app to Applications.
+The app includes its helper, resources, and Qt runtime with ad-hoc signatures.
 EOF
   exit "$exit_code"
 }

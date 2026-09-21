@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>org.ovlerfork.LumenFusion</string>
+  <key>CFBundleName</key>
+  <string>Lumen Fusion</string>
+  <key>CFBundleDisplayName</key>
+  <string>Lumen Fusion</string>
+  <key>CFBundleExecutable</key>
+  <string>${MACOSX_BUNDLE_EXECUTABLE_NAME}</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleVersion</key>
+  <string>${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}</string>
+  <key>CFBundleShortVersionString</key>
+  <string>${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}</string>
+  <key>CFBundleIconFile</key>
+  <string>sunshine.icns</string>
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>This app requires access to your microphone to stream audio.</string>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>This app requires screen recording access to stream your display.</string>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Lumen Fusion advertises itself on your local network via Bonjour so Moonlight clients can discover this host.</string>
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_nvstream._tcp</string>
+  </array>
+</dict>
+</plist>

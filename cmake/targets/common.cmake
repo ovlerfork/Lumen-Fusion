@@ -27,8 +27,12 @@ endif()
 
 target_link_libraries(sunshine ${SUNSHINE_EXTERNAL_LIBRARIES} ${EXTRA_LIBS})
 target_compile_definitions(sunshine PUBLIC ${SUNSHINE_DEFINITIONS})
+set(SUNSHINE_EXECUTABLE_NAME lumina)
+if(APPLE AND SUNSHINE_PACKAGE_MACOS)
+    set(SUNSHINE_EXECUTABLE_NAME "Lumen Fusion")
+endif()
 set_target_properties(sunshine PROPERTIES CXX_STANDARD 23
-        OUTPUT_NAME lumina
+        OUTPUT_NAME "${SUNSHINE_EXECUTABLE_NAME}"
         VERSION ${PROJECT_VERSION}
         SOVERSION ${PROJECT_VERSION_MAJOR})
 

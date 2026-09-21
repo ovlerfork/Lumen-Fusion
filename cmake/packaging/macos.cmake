@@ -1,120 +1,139 @@
 # macOS-specific packaging
 
 if(SUNSHINE_PACKAGE_MACOS)
-    # Portable command-line ZIP and DMG. Keep executables and their relocated runtime
-    # below bin/ without creating a user-facing .app.
-    install(TARGETS sunshine
-            RUNTIME DESTINATION bin
-            COMPONENT Runtime)
-    install(TARGETS vd_helper
-            RUNTIME DESTINATION bin
-            COMPONENT Runtime)
-    install(FILES "${PROJECT_SOURCE_DIR}/hid_entitlements.plist"
-            "${PROJECT_SOURCE_DIR}/LICENSE"
-            DESTINATION .
-            COMPONENT Runtime)
+    set(_app "Lumen Fusion.app")
+    set(_resources "${_app}/Contents/Resources")
+    install(TARGETS sunshine BUNDLE DESTINATION . COMPONENT Runtime)
+    install(PROGRAMS "$<TARGET_FILE:vd_helper>"
+            DESTINATION "${_app}/Contents/MacOS" COMPONENT Runtime)
+    install(FILES "${PROJECT_SOURCE_DIR}/LICENSE" DESTINATION . COMPONENT Runtime)
+    install(FILES "${PROJECT_SOURCE_DIR}/sunshine.icns"
+            DESTINATION "${_resources}" COMPONENT Runtime)
+    install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/macos/assets/"
+            DESTINATION "${_resources}" COMPONENT Runtime
+            PATTERN "Info.plist" EXCLUDE)
 
-    install(PROGRAMS
-            "${PROJECT_SOURCE_DIR}/scripts/launch-lumen-fusion.command"
-            "${PROJECT_SOURCE_DIR}/scripts/install-lumen-fusion.command"
-            DESTINATION .
-            COMPONENT Runtime)
+    # Keep resources current even when only web assets or the helper change.
+    add_custom_target(macos-bundle-resources
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_BUNDLE_CONTENT_DIR:sunshine>/MacOS"
+            COMMAND "${CMAKE_COMMAND}" -E copy_directory
+                    "${CMAKE_BINARY_DIR}/assets" "$<TARGET_BUNDLE_CONTENT_DIR:sunshine>/Resources"
+            COMMAND "${CMAKE_COMMAND}" -E copy_directory
+                    "${SUNSHINE_SOURCE_ASSETS_DIR}/macos/assets" "$<TARGET_BUNDLE_CONTENT_DIR:sunshine>/Resources"
+            COMMAND "${CMAKE_COMMAND}" -E rm -f "$<TARGET_BUNDLE_CONTENT_DIR:sunshine>/Resources/Info.plist"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                    "${PROJECT_SOURCE_DIR}/sunshine.icns" "$<TARGET_BUNDLE_CONTENT_DIR:sunshine>/Resources/sunshine.icns"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                    "$<TARGET_FILE:vd_helper>" "$<TARGET_BUNDLE_CONTENT_DIR:sunshine>/MacOS/vd_helper"
+            DEPENDS vd_helper web-ui
+            VERBATIM)
+    add_dependencies(sunshine macos-bundle-resources)
 
+    set(LUMINA_QT_PLUGINS "")
+    set(LUMINA_QT_RUNTIME_DIRS "${MACOS_LINK_DIRECTORIES}")
     if(SUNSHINE_ENABLE_TRAY)
-        # Keep the command-line package relocatable without adopting Sunshine's
-        # .app signing flow. The platform plugin is loaded through qt.conf and
-        # BundleUtilities places Qt beside bin/ in Frameworks/.
-        file(GENERATE
-                OUTPUT "${CMAKE_BINARY_DIR}/qt.conf"
+        file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/qt.conf"
                 CONTENT "[Paths]\nPlugins = PlugIns\n")
         get_filename_component(LUMINA_QT_PREFIX "${Qt6_DIR}/../../.." ABSOLUTE)
         get_filename_component(LUMINA_QTSVG_PREFIX "${Qt6Svg_DIR}/../../.." ABSOLUTE)
-        set(LUMINA_QT_COCOA_PLUGIN
-                "${LUMINA_QT_PREFIX}/share/qt/plugins/platforms/libqcocoa.dylib")
-        if(NOT EXISTS "${LUMINA_QT_COCOA_PLUGIN}")
-            message(FATAL_ERROR "Qt Cocoa platform plugin was not found: ${LUMINA_QT_COCOA_PLUGIN}")
-        endif()
-        install(FILES "${CMAKE_BINARY_DIR}/qt.conf"
-                DESTINATION bin
-                COMPONENT Runtime)
-        install(FILES "${LUMINA_QT_COCOA_PLUGIN}"
-                DESTINATION "bin/PlugIns/platforms"
-                COMPONENT Runtime)
-        install(CODE
-                "set(LUMINA_QT_RUNTIME_DIRS \"${LUMINA_QT_PREFIX}/lib;${LUMINA_QTSVG_PREFIX}/lib\")"
-                COMPONENT Runtime)
-
-        install(CODE [[
-            set(_package_root "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}")
-            set(_lumina "${_package_root}/bin/lumina")
-            set(_qt_platform_plugin "${_package_root}/bin/PlugIns/platforms/libqcocoa.dylib")
-
-            include(BundleUtilities)
-            set(BU_CHMOD_BUNDLE_ITEMS TRUE)
-
-            # BundleUtilities otherwise places direct-executable dependencies
-            # beside bin/, then rejects them as outside the bundle. Keep them
-            # under bin/Frameworks so the command-line package remains valid.
-            function(gp_item_default_embedded_path_override item path_var)
-                if(item MATCHES "[^/]+\\.framework/" OR item MATCHES "\\.dylib$")
-                    set(${path_var} "@executable_path/Frameworks" PARENT_SCOPE)
-                endif()
-            endfunction()
-
-            fixup_bundle("${_lumina}" "${_qt_platform_plugin}" "${LUMINA_QT_RUNTIME_DIRS}")
-
-            # Relocation invalidates upstream signatures. Ad-hoc sign nested
-            # libraries first, valid top-level framework bundles next, helper
-            # binaries after that, and Lumina itself last. The main executable
-            # deliberately receives no restricted HID entitlement here.
-            execute_process(COMMAND /usr/bin/xattr -rc "${_package_root}")
-
-            set(_framework_dir "${_package_root}/bin/Frameworks")
-            file(GLOB_RECURSE _sign_items
-                "${_framework_dir}/*.dylib"
-                "${_package_root}/bin/PlugIns/*.dylib"
-            )
-            if(EXISTS "${_framework_dir}")
-                file(GLOB _framework_items
-                    LIST_DIRECTORIES true
-                    "${_framework_dir}/*.framework"
-                )
-                list(APPEND _sign_items ${_framework_items})
-            endif()
-
-            foreach(_item IN LISTS _sign_items)
-                execute_process(
-                    COMMAND /usr/bin/codesign --sign - --force "${_item}"
-                    RESULT_VARIABLE _sign_result
-                )
-                if(NOT _sign_result EQUAL 0)
-                    message(FATAL_ERROR "Failed to ad-hoc sign packaged runtime: ${_item}")
-                endif()
-            endforeach()
-
-            foreach(_executable IN ITEMS "${_package_root}/bin/vd_helper" "${_lumina}")
-                execute_process(
-                    COMMAND /usr/bin/codesign --sign - --force "${_executable}"
-                    RESULT_VARIABLE _sign_result
-                )
-                if(NOT _sign_result EQUAL 0)
-                    message(FATAL_ERROR "Failed to ad-hoc sign packaged executable: ${_executable}")
-                endif()
-            endforeach()
-        ]] COMPONENT Runtime)
+        list(APPEND LUMINA_QT_RUNTIME_DIRS "${LUMINA_QT_PREFIX}/lib" "${LUMINA_QTSVG_PREFIX}/lib")
+        foreach(_plugin IN ITEMS platforms/libqcocoa.dylib imageformats/libqsvg.dylib iconengines/libqsvgicon.dylib)
+            find_file(_plugin_file NAMES "${_plugin}"
+                    PATHS "${LUMINA_QT_PREFIX}/share/qt/plugins" "${LUMINA_QT_PREFIX}/plugins"
+                          "${LUMINA_QTSVG_PREFIX}/share/qt/plugins" "${LUMINA_QTSVG_PREFIX}/plugins"
+                    NO_DEFAULT_PATH REQUIRED)
+            get_filename_component(_plugin_dir "${_plugin}" DIRECTORY)
+            install(FILES "${_plugin_file}" DESTINATION "${_app}/Contents/PlugIns/${_plugin_dir}" COMPONENT Runtime)
+            add_custom_command(TARGET macos-bundle-resources POST_BUILD
+                    COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_BUNDLE_CONTENT_DIR:sunshine>/PlugIns/${_plugin_dir}"
+                    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                            "${_plugin_file}" "$<TARGET_BUNDLE_CONTENT_DIR:sunshine>/PlugIns/${_plugin}"
+                    VERBATIM)
+            list(APPEND LUMINA_QT_PLUGINS "${_plugin}")
+            unset(_plugin_file CACHE)
+        endforeach()
+        install(FILES "${CMAKE_BINARY_DIR}/qt.conf" DESTINATION "${_resources}" COMPONENT Runtime)
+        add_custom_command(TARGET macos-bundle-resources POST_BUILD
+                COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                        "${CMAKE_BINARY_DIR}/qt.conf" "$<TARGET_BUNDLE_CONTENT_DIR:sunshine>/Resources/qt.conf"
+                VERBATIM)
     endif()
 
+    install(CODE "set(LUMINA_QT_RUNTIME_DIRS \"${LUMINA_QT_RUNTIME_DIRS}\")\nset(LUMINA_QT_PLUGINS \"${LUMINA_QT_PLUGINS}\")"
+            COMPONENT Runtime)
+    install(CODE [[
+        set(_app "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/Lumen Fusion.app")
+        set(_contents "${_app}/Contents")
+        set(_extra_binaries "${_contents}/MacOS/vd_helper")
+        foreach(_plugin IN LISTS LUMINA_QT_PLUGINS)
+            list(APPEND _extra_binaries "${_contents}/PlugIns/${_plugin}")
+        endforeach()
+
+        include(BundleUtilities)
+        set(BU_CHMOD_BUNDLE_ITEMS TRUE)
+        set(BU_COPY_FULL_FRAMEWORK_CONTENTS TRUE)
+        function(gp_item_default_embedded_path_override item path_var)
+            if(item MATCHES "\\.framework/" OR item MATCHES "\\.dylib$")
+                set(${path_var} "@executable_path/../Frameworks" PARENT_SCOPE)
+            endif()
+        endfunction()
+        fixup_bundle("${_app}" "${_extra_binaries}" "${LUMINA_QT_RUNTIME_DIRS}")
+
+        # All relocation and stripping precede signing. Sign Mach-O files first,
+        # then enclosing frameworks, and finally seal the outer app resources.
+        file(GLOB_RECURSE _bundle_items LIST_DIRECTORIES true "${_contents}/*")
+        set(_machos "")
+        set(_frameworks "")
+        foreach(_item IN LISTS _bundle_items)
+            if(IS_SYMLINK "${_item}")
+                continue()
+            elseif(IS_DIRECTORY "${_item}")
+                if(_item MATCHES "\\.framework$")
+                    list(APPEND _frameworks "${_item}")
+                endif()
+                continue()
+            endif()
+            execute_process(COMMAND /usr/bin/file -b "${_item}"
+                    OUTPUT_VARIABLE _type RESULT_VARIABLE _file_result)
+            if(NOT _file_result EQUAL 0)
+                message(FATAL_ERROR "Cannot inspect packaged file: ${_item}")
+            endif()
+            if(_type MATCHES "Mach-O")
+                execute_process(COMMAND /usr/bin/strip -x "${_item}" RESULT_VARIABLE _strip_result)
+                if(NOT _strip_result EQUAL 0)
+                    message(FATAL_ERROR "Cannot strip packaged binary: ${_item}")
+                endif()
+                list(APPEND _machos "${_item}")
+            endif()
+        endforeach()
+        list(SORT _frameworks ORDER DESCENDING)
+        foreach(_item IN LISTS _machos _frameworks)
+            execute_process(COMMAND /usr/bin/codesign --sign - --force "${_item}" RESULT_VARIABLE _sign_result)
+            if(NOT _sign_result EQUAL 0)
+                message(FATAL_ERROR "Cannot sign packaged runtime: ${_item}")
+            endif()
+        endforeach()
+        execute_process(COMMAND /usr/bin/codesign --sign - --force "${_app}" RESULT_VARIABLE _sign_result)
+        if(NOT _sign_result EQUAL 0)
+            message(FATAL_ERROR "Cannot sign app: ${_app}")
+        endif()
+        execute_process(COMMAND /usr/bin/codesign --verify --deep --strict "${_app}" RESULT_VARIABLE _verify_result)
+        if(NOT _verify_result EQUAL 0)
+            message(FATAL_ERROR "App signature verification failed: ${_app}")
+        endif()
+    ]] COMPONENT Runtime)
+
+    set(CPACK_STRIP_FILES OFF)
     set(CPACK_DMG_VOLUME_NAME "Lumen Fusion")
-    set(CPACK_DMG_DISABLE_APPLICATIONS_SYMLINK ON)
+    set(CPACK_DMG_DISABLE_APPLICATIONS_SYMLINK OFF)
     set(CPACK_DMG_SLA_USE_RESOURCE_FILE_LICENSE OFF)
-    set(CPACK_PACKAGE_FILE_NAME "${CMAKE_PROJECT_NAME}")
+    set(CPACK_PACKAGE_FILE_NAME "Lumina")
 else()
     install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/macos/misc/uninstall_pkg.sh"
             DESTINATION "${SUNSHINE_ASSETS_DIR}")
+    install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/macos/assets/"
+            DESTINATION "${SUNSHINE_ASSETS_DIR}")
+    # copy assets to build directory, for running without install
+    file(COPY "${SUNSHINE_SOURCE_ASSETS_DIR}/macos/assets/"
+            DESTINATION "${CMAKE_BINARY_DIR}/assets")
 endif()
-
-install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/macos/assets/"
-        DESTINATION "${SUNSHINE_ASSETS_DIR}")
-# copy assets to build directory, for running without install
-file(COPY "${SUNSHINE_SOURCE_ASSETS_DIR}/macos/assets/"
-        DESTINATION "${CMAKE_BINARY_DIR}/assets")

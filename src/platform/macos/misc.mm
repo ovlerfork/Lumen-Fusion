@@ -175,6 +175,18 @@ namespace platf {
     return std::make_unique<deinit_t>();
   }
 
+#ifdef SUNSHINE_MACOS_BUNDLE
+  fs::path assets() {
+    @autoreleasepool {
+      NSBundle *bundle = [NSBundle mainBundle];
+      if ([[bundle bundlePath] hasSuffix:@".app"] && [bundle resourcePath]) {
+        return fs::path {[[bundle resourcePath] fileSystemRepresentation]};
+      }
+      return SUNSHINE_ASSETS_DIR;
+    }
+  }
+#endif
+
   fs::path appdata() {
     const char *homedir;
     if ((homedir = getenv("HOME")) == nullptr) {

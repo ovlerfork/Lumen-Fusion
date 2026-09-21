@@ -14,9 +14,14 @@
 #include <Simple-Web-Server/server_https.hpp>
 
 // local includes
+#include "platform/common.h"
 #include "thread_safe.h"
 
-#define WEB_DIR SUNSHINE_ASSETS_DIR "/web/"
+#ifdef SUNSHINE_MACOS_BUNDLE
+  #define WEB_DIR (platf::assets().string() + "/web/")
+#else
+  #define WEB_DIR SUNSHINE_ASSETS_DIR "/web/"
+#endif
 
 namespace confighttp {
   constexpr auto PORT_HTTPS = 1;

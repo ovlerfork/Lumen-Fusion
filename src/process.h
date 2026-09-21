@@ -21,7 +21,7 @@
 #include "rtsp.h"
 #include "utility.h"
 
-#define DEFAULT_APP_IMAGE_PATH SUNSHINE_ASSETS_DIR "/box.png"
+#define DEFAULT_APP_IMAGE_PATH (platf::assets() / "box.png").string()
 
 namespace proc {
   using file_t = util::safe_ptr_v2<FILE, int, fclose>;

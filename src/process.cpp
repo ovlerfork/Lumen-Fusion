@@ -513,7 +513,7 @@ namespace proc {
     }
 
     // check if image is in assets directory
-    if (auto full_image_path = std::filesystem::path(SUNSHINE_ASSETS_DIR) / app_image_path; std::filesystem::exists(full_image_path)) {
+    if (auto full_image_path = platf::assets() / app_image_path; std::filesystem::exists(full_image_path)) {
       // Validate PNG signature
       if (!check_valid_png(full_image_path)) {
         BOOST_LOG(warning) << "Invalid PNG file at path ["sv << full_image_path << ']';
@@ -524,7 +524,7 @@ namespace proc {
 
     if (app_image_path == "./assets/steam.png") {
       // handle old default steam image definition
-      return SUNSHINE_ASSETS_DIR "/steam.png";
+      return (platf::assets() / "steam.png").string();
     }
 
     // check if specified image exists

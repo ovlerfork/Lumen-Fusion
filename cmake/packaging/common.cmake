@@ -17,8 +17,12 @@ set(CPACK_PACKAGE_FILE_NAME "${CMAKE_PROJECT_NAME}")
 set(CPACK_STRIP_FILES YES)
 
 # install common assets
+set(SUNSHINE_INSTALL_ASSETS_DIR "${SUNSHINE_ASSETS_DIR}")
+if(APPLE AND SUNSHINE_PACKAGE_MACOS)
+    set(SUNSHINE_INSTALL_ASSETS_DIR "Lumen Fusion.app/Contents/Resources")
+endif()
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/"
-        DESTINATION "${SUNSHINE_ASSETS_DIR}"
+        DESTINATION "${SUNSHINE_INSTALL_ASSETS_DIR}"
         PATTERN "web" EXCLUDE)
 # copy assets to build directory, for running without install
 file(GLOB_RECURSE ALL_ASSETS
@@ -31,7 +35,7 @@ endforeach()
 
 # install built vite assets
 install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/assets/web"
-        DESTINATION "${SUNSHINE_ASSETS_DIR}")
+        DESTINATION "${SUNSHINE_INSTALL_ASSETS_DIR}")
 
 # platform specific packaging
 if(WIN32)
