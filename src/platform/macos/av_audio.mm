@@ -442,7 +442,9 @@ namespace platf {
   }
 
   if (self->tapObjectID != kAudioObjectUnknown) {
-    AudioHardwareDestroyProcessTap(self->tapObjectID);
+    if (@available(macOS 14.2, *)) {
+      AudioHardwareDestroyProcessTap(self->tapObjectID);
+    }
     self->tapObjectID = kAudioObjectUnknown;
     BOOST_LOG(debug) << "Process tap destroyed"sv;
   }
@@ -546,8 +548,8 @@ namespace platf {
   using namespace std::literals;
 
   // Check macOS version requirement
-  if (![[NSProcessInfo processInfo] isOperatingSystemAtLeastVersion:((NSOperatingSystemVersion) {14, 0, 0})]) {
-    BOOST_LOG(error) << "macOS version requirement not met (need 14.0+)"sv;
+  if (![[NSProcessInfo processInfo] isOperatingSystemAtLeastVersion:((NSOperatingSystemVersion) {14, 2, 0})]) {
+    BOOST_LOG(error) << "Core Audio process taps require macOS 14.2+"sv;
     return -1;
   }
 
@@ -615,8 +617,12 @@ namespace platf {
   // Create the tap
   BOOST_LOG(debug) << "Creating process tap with name: "sv << [uniqueName UTF8String];
 
-  // Use direct API call like the reference implementation
-  OSStatus status = AudioHardwareCreateProcessTap(tapDescription, &self->tapObjectID);
+  // Process taps were introduced in macOS 14.2. Keep the rest of Lumina
+  // available on macOS 14.0+ and fail this optional backend cleanly.
+  OSStatus status = kAudioHardwareUnspecifiedError;
+  if (@available(macOS 14.2, *)) {
+    status = AudioHardwareCreateProcessTap(tapDescription, &self->tapObjectID);
+  }
 
   [uniqueUUID release];
 
