@@ -33,7 +33,6 @@
     self = [super init];
     if (self) {
         self.gamepadIndex = index;
-        self.isConnected = YES;
         self.keyMapping = kDefaultGamepadMapping;
         self.leftStickDeadzone = 0.15f;
         self.rightStickDeadzone = 0.15f;
@@ -47,6 +46,11 @@
         self.rightTrigger = 0;
 
         self.eventSource = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
+        if (!self.eventSource) {
+            [self release];
+            return nil;
+        }
+        self.isConnected = YES;
 
         NSLog(@"[MacOSGamepad] Gamepad %d connected (keyboard/mouse emulation mode)", index);
     }
@@ -54,6 +58,7 @@
 }
 
 - (void)dealloc {
+    [self disconnect];
     if (self.eventSource) {
         CFRelease(self.eventSource);
     }
@@ -61,6 +66,18 @@
 }
 
 - (void)disconnect {
+    if (!self.isConnected) {
+        return;
+    }
+
+    // Release held keys and trigger buttons before disabling state updates.
+    [self updateState:0
+          leftStickX:0
+          leftStickY:0
+         rightStickX:0
+         rightStickY:0
+         leftTrigger:0
+        rightTrigger:0];
     self.isConnected = NO;
     NSLog(@"[MacOSGamepad] Gamepad %d disconnected", self.gamepadIndex);
 }

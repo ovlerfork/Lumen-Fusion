@@ -58,6 +58,8 @@ namespace platf {
     CGEventRef mouse_event {};  // mouse event source
     double scrollwheel_scaling {DEFAULT_SCROLLWHEEL_SCALING};
     int scroll_lines_per_detent {DEFAULT_SCROLL_LINES_PER_DETENT};
+    int64_t vscroll_remainder {};
+    int64_t hscroll_remainder {};
     bool mouse_down[3] {};  // mouse button status
     std::chrono::steady_clock::steady_clock::time_point last_mouse_event[3][2];  // timestamp of last mouse events
 
@@ -358,34 +360,39 @@ const KeyCodeMap kKeyCodesMap[] = {
   int alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata, feedback_queue_t feedback_queue) {
     auto macos_input = static_cast<macos_input_t *>(input.get());
 
-    // Find an available slot
-    for (int i = 0; i < MAX_GAMEPADS; i++) {
-      if (macos_input->gamepad_modes[i] != gamepad_mode_e::NONE) {
-        continue;
-      }
-
-      // Try HID mode first if available
-      if (macos_input->hid_available) {
-        HIDGamepad *hid = [[HIDGamepad alloc] initWithIndex:i];
-        if ([hid createDevice]) {
-          macos_input->hid_gamepads[i] = hid;
-          macos_input->gamepad_modes[i] = gamepad_mode_e::HID;
-          BOOST_LOG(info) << "Gamepad "sv << i << " allocated (HID virtual device mode)"sv;
-          return i;
-        }
-        [hid release];
-        BOOST_LOG(warning) << "Gamepad "sv << i << ": HID creation failed, falling back to emulation"sv;
-      }
-
-      // Fallback to keyboard/mouse emulation
-      macos_input->emulation_gamepads[i] = [[MacOSGamepad alloc] initWithIndex:i];
-      macos_input->gamepad_modes[i] = gamepad_mode_e::EMULATION;
-      BOOST_LOG(info) << "Gamepad "sv << i << " allocated (keyboard/mouse emulation mode)"sv;
-      return i;
+    const auto i = id.globalIndex;
+    if (i < 0 || i >= MAX_GAMEPADS) {
+      BOOST_LOG(warning) << "Gamepad index out of range: "sv << i;
+      return -1;
+    }
+    if (macos_input->gamepad_modes[i] != gamepad_mode_e::NONE) {
+      BOOST_LOG(warning) << "Gamepad "sv << i << " already allocated"sv;
+      return -1;
     }
 
-    BOOST_LOG(warning) << "No available gamepad slots"sv;
-    return -1;
+    // Try HID mode first if available
+    if (macos_input->hid_available) {
+      HIDGamepad *hid = [[HIDGamepad alloc] initWithIndex:i];
+      if ([hid createDevice]) {
+        macos_input->hid_gamepads[i] = hid;
+        macos_input->gamepad_modes[i] = gamepad_mode_e::HID;
+        BOOST_LOG(info) << "Gamepad "sv << i << " allocated (HID virtual device mode)"sv;
+        return 0;
+      }
+      [hid release];
+      BOOST_LOG(warning) << "Gamepad "sv << i << ": HID creation failed, falling back to emulation"sv;
+    }
+
+    // Fallback to keyboard/mouse emulation
+    MacOSGamepad *emulation = [[MacOSGamepad alloc] initWithIndex:i];
+    if (!emulation) {
+      BOOST_LOG(error) << "Gamepad "sv << i << ": emulation initialization failed"sv;
+      return -1;
+    }
+    macos_input->emulation_gamepads[i] = emulation;
+    macos_input->gamepad_modes[i] = gamepad_mode_e::EMULATION;
+    BOOST_LOG(info) << "Gamepad "sv << i << " allocated (keyboard/mouse emulation mode)"sv;
+    return 0;
   }
 
   void free_gamepad(input_t &input, int nr) {
@@ -628,11 +635,13 @@ const KeyCodeMap kKeyCodesMap[] = {
     return std::max(1, static_cast<int>(std::ceil(1.0 + scroll_scale * lines_per_scroll_scale)));
   }
 
-  int scroll_pixels(const macos_input_t *macos_input, const int high_res_distance) {
+  int scroll_pixels(const macos_input_t *macos_input, const int high_res_distance, int64_t &remainder) {
     const auto source_pixels_per_line = CGEventSourceGetPixelsPerLine(macos_input->source);
     const auto pixels_per_line = source_pixels_per_line > 0 ? static_cast<int>(source_pixels_per_line + 0.5) : 10;
-    const auto scaled_pixels = static_cast<int64_t>(high_res_distance) * std::max(1, pixels_per_line) * std::max(1, macos_input->scroll_lines_per_detent);
+    const auto scaled_pixels = static_cast<int64_t>(high_res_distance) * std::max(1, pixels_per_line) * std::max(1, macos_input->scroll_lines_per_detent) + remainder;
 
+    // Retain sub-pixel input separately for each axis in units of 1/WHEEL_DELTA.
+    remainder = scaled_pixels % WHEEL_DELTA;
     return static_cast<int>(scaled_pixels / WHEEL_DELTA);
   }
 
@@ -653,11 +662,13 @@ const KeyCodeMap kKeyCodesMap[] = {
   }
 
   void scroll(input_t &input, const int high_res_distance) {
-    post_scroll(input, scroll_pixels(static_cast<macos_input_t *>(input.get()), high_res_distance), 0);
+    auto macos_input = static_cast<macos_input_t *>(input.get());
+    post_scroll(input, scroll_pixels(macos_input, high_res_distance, macos_input->vscroll_remainder), 0);
   }
 
   void hscroll(input_t &input, int high_res_distance) {
-    post_scroll(input, 0, scroll_pixels(static_cast<macos_input_t *>(input.get()), high_res_distance));
+    auto macos_input = static_cast<macos_input_t *>(input.get());
+    post_scroll(input, 0, scroll_pixels(macos_input, high_res_distance, macos_input->hscroll_remainder));
   }
 
   /**

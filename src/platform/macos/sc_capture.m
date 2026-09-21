@@ -183,7 +183,7 @@ API_AVAILABLE(macos(12.3))
         config.height = self.frameHeight;
         config.minimumFrameInterval = CMTimeMake(1, self.frameRate);
         config.pixelFormat = self.pixelFormat;
-        config.queueDepth = 5;
+        config.queueDepth = 4;
         config.showsCursor = YES;
 
         // Enable audio capture - this is the key feature!
