@@ -2,15 +2,15 @@
 set -euo pipefail
 
 num_processors=$(sysctl -n hw.ncpu 2>/dev/null || echo 4)
-publisher_name="jayl-dev"
-publisher_website="https://github.com/jayl-dev/Lumina"
-publisher_issue_url="https://github.com/jayl-dev/Lumina/issues"
+publisher_name="ovlerfork"
+publisher_website="https://github.com/ovlerfork/Lumen-Fusion"
+publisher_issue_url="https://github.com/ovlerfork/Lumen-Fusion/issues"
 step="all"
 build_docs="OFF"
 build_tests="OFF"
 build_type="Release"
 
-BUILD_VERSION=""
+BUILD_VERSION="${BUILD_VERSION:-}"
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 COMMIT=$(git rev-parse --short HEAD)
 export BUILD_VERSION BRANCH COMMIT
@@ -54,6 +54,8 @@ function run_step_cmake() {
     "-DBUILD_TESTS=${build_tests}"
     "-DBUILD_WERROR=ON"
     "-DCMAKE_BUILD_TYPE=${build_type}"
+    "-DCMAKE_OSX_ARCHITECTURES=arm64"
+    "-DCMAKE_OSX_DEPLOYMENT_TARGET=14.0"
     "-DICU_ROOT=$(brew --prefix icu4c@78 2>/dev/null)"
     "-DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3 2>/dev/null)"
     "-DOpus_ROOT_DIR=$(brew --prefix opus 2>/dev/null)"

@@ -1,0 +1,86 @@
+name: macOS portable artifact
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/lumen-fusion]
+
+permissions:
+  contents: read
+
+jobs:
+  macos-arm64:
+    runs-on: macos-15
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      BUILD_VERSION: 0.0.${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Initialize macOS dependencies
+        run: |
+          test "$(uname -m)" = arm64
+          git submodule update --init --depth 1 -- \
+            third-party/build-deps third-party/libdisplaydevice \
+            third-party/moonlight-common-c third-party/nv-codec-headers \
+            third-party/Simple-Web-Server third-party/TPCircularBuffer \
+            third-party/tray third-party/googletest
+          git -C third-party/moonlight-common-c submodule update --init --depth 1 -- enet
+      - name: Install dependencies
+        run: bash scripts/macos_build.sh --step=deps
+      - name: Configure
+        run: bash scripts/macos_build.sh --step=cmake --build-tests
+      - name: Build
+        run: |
+          cmake --build build-macos-zip --target sunshine web-ui vd_helper test_sunshine --parallel 3
+      - name: Test
+        working-directory: build-macos-zip/tests
+        run: ./test_sunshine
+      - name: Package
+        run: bash scripts/macos_build.sh --step=zip
+      - name: Validate extracted portable runtime
+        run: |
+          extracted="${RUNNER_TEMP}/portable runtime"
+          mkdir -p "$extracted"
+          ditto -x -k build-macos-zip/cpack_artifacts/Lumina.zip "$extracted"
+          cd "$extracted/Lumina"
+          test -x bin/lumina
+          test -x bin/vd_helper
+          test -x launch-lumen-fusion.command
+          test -x install-lumen-fusion.command
+          test -s hid_entitlements.plist
+          test -s assets/apps.json
+          test -s assets/web/index.html
+          test -s bin/qt.conf
+          test -s bin/PlugIns/platforms/libqcocoa.dylib
+          test -d bin/Frameworks
+          for library in Core Gui Widgets Svg; do
+            test -n "$(find bin/Frameworks \( -name "Qt${library}*" -o -name "libQt6${library}*" \) -print -quit)"
+          done
+          while IFS= read -r -d '' binary; do
+            if ! file -b "$binary" | grep -q 'Mach-O'; then
+              continue
+            fi
+            lipo -verify_arch arm64 "$binary"
+            codesign --verify --strict --verbose=2 "$binary"
+            # Only system absolute dependencies may remain after relocation.
+            otool -L "$binary" | tail -n +2 | while IFS= read -r dependency; do
+              dependency="${dependency%% (compatibility version*}"
+              dependency="${dependency#"${dependency%%[![:space:]]*}"}"
+              case "$dependency" in
+                /System/Library/*|/usr/lib/*|@executable_path/*|@loader_path/*|@rpath/*) ;;
+                *) echo "Unbundled dependency in $binary: $dependency" >&2; exit 1 ;;
+              esac
+            done
+          done < <(find bin -type f -print0)
+          ./bin/lumina --help
+      - name: Upload validated ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: lumen-fusion-macos-arm64
+          path: build-macos-zip/cpack_artifacts/Lumina.zip
+          if-no-files-found: error

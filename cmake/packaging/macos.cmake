@@ -13,6 +13,12 @@ if(SUNSHINE_PACKAGE_MACOS)
             DESTINATION .
             COMPONENT Runtime)
 
+    install(PROGRAMS
+            "${PROJECT_SOURCE_DIR}/scripts/launch-lumen-fusion.command"
+            "${PROJECT_SOURCE_DIR}/scripts/install-lumen-fusion.command"
+            DESTINATION .
+            COMPONENT Runtime)
+
     if(SUNSHINE_ENABLE_TRAY)
         # Keep the command-line package relocatable without adopting Sunshine's
         # .app signing flow. The platform plugin is loaded through qt.conf and
