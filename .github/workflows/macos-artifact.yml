@@ -18,7 +18,7 @@ jobs:
     env:
       BUILD_VERSION: 0.0.${{ github.run_number }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - name: Initialize macOS dependencies
@@ -39,7 +39,11 @@ jobs:
           cmake --build build-macos-zip --target sunshine web-ui vd_helper test_sunshine --parallel 3
       - name: Test
         working-directory: build-macos-zip/tests
-        run: ./test_sunshine
+        run: |
+          # Lumen intentionally removed docs/configuration.md when it became macOS-only.
+          # Keep the three remaining ConfigConsistency tests and all runtime/unit tests,
+          # but exclude the two Sunshine documentation-consistency checks that require it.
+          ./test_sunshine --gtest_filter=-ConfigConsistencyTest.AllConfigOptionsExistInAllFiles:ConfigConsistencyTest.ConfigTabsMatchDocumentationSections
       - name: Package
         run: bash scripts/macos_build.sh --step=zip
       - name: Validate extracted portable runtime
