@@ -45,62 +45,40 @@ jobs:
           # but exclude the two Sunshine documentation-consistency checks that require it.
           ./test_sunshine --gtest_filter=-ConfigConsistencyTest.AllConfigOptionsExistInAllFiles:ConfigConsistencyTest.ConfigTabsMatchDocumentationSections
       - name: Package
-        run: bash scripts/macos_build.sh --step=zip
-      - name: Validate extracted portable runtime
+        run: |
+          bash scripts/macos_build.sh --step=zip
+          bash scripts/macos_build.sh --step=dmg
+      - name: Validate extracted ZIP
         run: |
           extracted="${RUNNER_TEMP}/portable runtime"
           mkdir -p "$extracted"
           ditto -x -k build-macos-zip/cpack_artifacts/Lumina.zip "$extracted"
-          cd "$extracted/Lumina"
-          test -x bin/lumina
-          test -x bin/vd_helper
-          test -x launch-lumen-fusion.command
-          test -x install-lumen-fusion.command
-          test -s hid_entitlements.plist
-          test -s assets/apps.json
-          test -s assets/web/index.html
-          test -s bin/qt.conf
-          test -s bin/PlugIns/platforms/libqcocoa.dylib
-          test -d bin/Frameworks
-          for library in Core Gui Widgets Svg; do
-            test -n "$(find bin/Frameworks \( -name "Qt${library}*" -o -name "libQt6${library}*" \) -print -quit)"
-          done
-          while IFS= read -r -d '' binary; do
-            if ! file -b "$binary" | grep -q 'Mach-O'; then
-              continue
-            fi
-            lipo "$binary" -verify_arch arm64
-            codesign --verify --strict --verbose=2 "$binary"
-            # Only system absolute dependencies may remain after relocation.
-            otool -L "$binary" | tail -n +2 | while IFS= read -r dependency; do
-              dependency="${dependency%% (compatibility version*}"
-              dependency="${dependency#"${dependency%%[![:space:]]*}"}"
-              case "$dependency" in
-                /System/Library/*|/usr/lib/*|@executable_path/*|@loader_path/*|@rpath/*) ;;
-                *) echo "Unbundled dependency in $binary: $dependency" >&2; exit 1 ;;
-              esac
-            done
-          done < <(find bin -type f -print0)
-          ./bin/lumina --help
-      - name: Validate portable install and reinstall
+          validation_home="$(mktemp -d "${RUNNER_TEMP}/zip home.XXXXXX")"
+          bash scripts/validate-macos-package.sh "$extracted/Lumina" "$validation_home"
+      - name: Validate mounted DMG and detached installation
         run: |
-          validation_home="$(mktemp -d "${RUNNER_TEMP}/portable home.XXXXXX")"
-          unrelated_cwd="$(mktemp -d "${RUNNER_TEMP}/portable cwd.XXXXXX")"
-          installer="${RUNNER_TEMP}/portable runtime/Lumina/install-lumen-fusion.command"
-          sentinel="${validation_home}/.config/lumina/portable-validation-sentinel"
-          mkdir -p "$(dirname "$sentinel")"
-          printf 'Existing Lumina configuration\n' > "$sentinel"
-          cd "$unrelated_cwd"
-          for phase in install reinstall; do
-            echo "Validating portable $phase"
-            env HOME="$validation_home" "$installer"
-            cmp <(printf 'Existing Lumina configuration\n') "$sentinel"
-            test -x "${validation_home}/.local/bin/lumen-fusion"
-            env HOME="$validation_home" PATH="${validation_home}/.local/bin:${PATH}" lumen-fusion --help
-          done
-      - name: Upload validated ZIP
+          dmg="${PWD}/build-macos-zip/cpack_artifacts/Lumina.dmg"
+          mount_point="${RUNNER_TEMP}/mounted Lumen Fusion"
+          validation_home="$(mktemp -d "${RUNNER_TEMP}/dmg home.XXXXXX")"
+          mkdir -p "$mount_point"
+          cleanup() {
+            if mount | grep -Fq " on $mount_point ("; then
+              hdiutil detach "$mount_point"
+            fi
+          }
+          trap cleanup EXIT
+          hdiutil verify "$dmg"
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount_point" "$dmg"
+          bash scripts/validate-macos-package.sh "$mount_point" "$validation_home"
+          hdiutil detach "$mount_point"
+          trap - EXIT
+          cd "$RUNNER_TEMP"
+          env HOME="$validation_home" PATH="${validation_home}/.local/bin:${PATH}" lumen-fusion --help
+      - name: Upload validated ZIP and DMG
         uses: actions/upload-artifact@v4
         with:
           name: lumen-fusion-macos-arm64
-          path: build-macos-zip/cpack_artifacts/Lumina.zip
+          path: |
+            build-macos-zip/cpack_artifacts/Lumina.zip
+            build-macos-zip/cpack_artifacts/Lumina.dmg
           if-no-files-found: error

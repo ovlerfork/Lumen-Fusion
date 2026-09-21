@@ -1,7 +1,7 @@
 # macOS-specific packaging
 
 if(SUNSHINE_PACKAGE_MACOS)
-    # Portable command-line ZIP. Keep executables and their relocated runtime
+    # Portable command-line ZIP and DMG. Keep executables and their relocated runtime
     # below bin/ without creating a user-facing .app.
     install(TARGETS sunshine
             RUNTIME DESTINATION bin
@@ -10,6 +10,7 @@ if(SUNSHINE_PACKAGE_MACOS)
             RUNTIME DESTINATION bin
             COMPONENT Runtime)
     install(FILES "${PROJECT_SOURCE_DIR}/hid_entitlements.plist"
+            "${PROJECT_SOURCE_DIR}/LICENSE"
             DESTINATION .
             COMPONENT Runtime)
 
@@ -103,6 +104,9 @@ if(SUNSHINE_PACKAGE_MACOS)
         ]] COMPONENT Runtime)
     endif()
 
+    set(CPACK_DMG_VOLUME_NAME "Lumen Fusion")
+    set(CPACK_DMG_DISABLE_APPLICATIONS_SYMLINK ON)
+    set(CPACK_DMG_SLA_USE_RESOURCE_FILE_LICENSE OFF)
     set(CPACK_PACKAGE_FILE_NAME "${CMAKE_PROJECT_NAME}")
 else()
     install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/macos/misc/uninstall_pkg.sh"

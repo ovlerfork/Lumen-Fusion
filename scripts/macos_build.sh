@@ -22,19 +22,19 @@ required_formulas=(
 function _usage() {
   local exit_code=$1
   cat <<EOF
-Build and package Lumina as a portable macOS command-line ZIP.
+Build and package Lumina as a portable macOS command-line ZIP and DMG.
 
 Usage: $0 [options]
 
 Options:
   -h, --help               Display this help message.
   --num-processors=N       Number of compilation workers (default: ${num_processors}).
-  --step=STEP              deps, cmake, build, zip, or all (default: all).
+  --step=STEP              deps, cmake, build, zip, dmg, or all (default: all).
   --debug                  Build in debug mode.
   --build-docs             Build documentation.
   --build-tests            Build tests.
 
-The ZIP contains lumina, vd_helper, assets, the Qt tray runtime, and
+Each package contains lumina, vd_helper, assets, the Qt tray runtime, and
 hid_entitlements.plist. Its runtime receives only ordinary ad-hoc signatures;
 users opt into the restricted HID entitlement by re-signing locally.
 EOF
@@ -81,16 +81,22 @@ function run_step_zip() {
   cpack -G ZIP --config "${build_dir}/CPackConfig.cmake" --verbose
 }
 
+function run_step_dmg() {
+  cpack -G DragNDrop --config "${build_dir}/CPackConfig.cmake" --verbose
+}
+
 function run_install() {
   case "$step" in
     deps) run_step_deps ;;
     cmake) run_step_cmake ;;
     build) run_step_build ;;
     zip) run_step_zip ;;
+    dmg) run_step_dmg ;;
     all)
       run_step_cmake
       run_step_build
       run_step_zip
+      run_step_dmg
       ;;
     *)
       echo "Invalid step: $step" >&2
