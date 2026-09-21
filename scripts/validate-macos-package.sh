@@ -18,6 +18,34 @@ contents="$app/Contents"
 plist="$contents/Info.plist"
 plutil -lint "$plist"
 plist_value() { /usr/libexec/PlistBuddy -c "Print :$1" "$plist"; }
+check_macos_minimum() {
+  python3 - "$1" "$2" "$3" <<'PY'
+import re
+import sys
+
+
+def version(value):
+    if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)*", value):
+        raise ValueError(f"Invalid macOS version: {value!r}")
+    parts = [int(part) for part in value.split(".")]
+    while parts and parts[-1] == 0:
+        parts.pop()
+    return tuple(parts)
+
+
+minimums, available, context = sys.argv[1:]
+try:
+    ceiling = version(available)
+    for minimum in minimums.split("\n"):
+        if version(minimum) > ceiling:
+            raise ValueError(f"minimum macOS {minimum} exceeds {available}")
+except ValueError as error:
+    sys.exit(f"{context}: {error}")
+PY
+}
+declared_minimum="$(plist_value LSMinimumSystemVersion)"
+echo "Declared minimum macOS version: $declared_minimum"
+check_macos_minimum "$declared_minimum" "$(sw_vers -productVersion)" 'Validation host'
 test "$(plist_value CFBundleIdentifier)" = org.ovlerfork.LumenFusion
 test "$(plist_value CFBundleExecutable)" = 'Lumen Fusion'
 test "$(plist_value CFBundleName)" = 'Lumen Fusion'
@@ -59,6 +87,7 @@ while IFS= read -r -d '' binary; do
   ')"
   test -n "$minimums"
   echo "arm64 minimum macOS version(s): $minimums"
+  check_macos_minimum "$minimums" "$declared_minimum" "$binary"
   otool -arch arm64 -L "$binary" | tail -n +2 | while IFS= read -r dependency; do
     dependency="${dependency%% (compatibility version*}"
     dependency="${dependency#"${dependency%%[![:space:]]*}"}"
