@@ -1,6 +1,7 @@
 #ifndef __RS_H_
 #define __RS_H_
 
+#include <stddef.h>
 #include <stdint.h>
 
 #define DATA_SHARDS_MAX 255
