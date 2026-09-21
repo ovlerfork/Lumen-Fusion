@@ -32,9 +32,11 @@ if(APPLE AND SUNSHINE_PACKAGE_MACOS)
     set(SUNSHINE_EXECUTABLE_NAME "Lumen Fusion")
 endif()
 set_target_properties(sunshine PROPERTIES CXX_STANDARD 23
-        OUTPUT_NAME "${SUNSHINE_EXECUTABLE_NAME}"
-        VERSION ${PROJECT_VERSION}
+        OUTPUT_NAME "${SUNSHINE_EXECUTABLE_NAME}")
+if(NOT (APPLE AND SUNSHINE_PACKAGE_MACOS))
+    set_target_properties(sunshine PROPERTIES VERSION ${PROJECT_VERSION}
         SOVERSION ${PROJECT_VERSION_MAJOR})
+endif()
 
 # CLion complains about unknown flags after running cmake, and cannot add symbols to the index for cuda files
 if(CUDA_INHERIT_COMPILE_OPTIONS)
