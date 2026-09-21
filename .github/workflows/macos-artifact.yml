@@ -69,7 +69,7 @@ jobs:
             if ! file -b "$binary" | grep -q 'Mach-O'; then
               continue
             fi
-            lipo -verify_arch arm64 "$binary"
+            lipo "$binary" -verify_arch arm64
             codesign --verify --strict --verbose=2 "$binary"
             # Only system absolute dependencies may remain after relocation.
             otool -L "$binary" | tail -n +2 | while IFS= read -r dependency; do
@@ -82,6 +82,22 @@ jobs:
             done
           done < <(find bin -type f -print0)
           ./bin/lumina --help
+      - name: Validate portable install and reinstall
+        run: |
+          validation_home="$(mktemp -d "${RUNNER_TEMP}/portable home.XXXXXX")"
+          unrelated_cwd="$(mktemp -d "${RUNNER_TEMP}/portable cwd.XXXXXX")"
+          installer="${RUNNER_TEMP}/portable runtime/Lumina/install-lumen-fusion.command"
+          sentinel="${validation_home}/.config/lumina/portable-validation-sentinel"
+          mkdir -p "$(dirname "$sentinel")"
+          printf 'Existing Lumina configuration\n' > "$sentinel"
+          cd "$unrelated_cwd"
+          for phase in install reinstall; do
+            echo "Validating portable $phase"
+            env HOME="$validation_home" "$installer"
+            cmp <(printf 'Existing Lumina configuration\n') "$sentinel"
+            test -x "${validation_home}/.local/bin/lumen-fusion"
+            env HOME="$validation_home" PATH="${validation_home}/.local/bin:${PATH}" lumen-fusion --help
+          done
       - name: Upload validated ZIP
         uses: actions/upload-artifact@v4
         with:
