@@ -71,13 +71,23 @@ if(SUNSHINE_PACKAGE_MACOS)
 
         include(BundleUtilities)
         set(BU_CHMOD_BUNDLE_ITEMS TRUE)
-        set(BU_COPY_FULL_FRAMEWORK_CONTENTS TRUE)
+        set(BU_COPY_FULL_FRAMEWORK_CONTENTS FALSE)
         function(gp_item_default_embedded_path_override item path_var)
             if(item MATCHES "\\.framework/" OR item MATCHES "\\.dylib$")
                 set(${path_var} "@executable_path/../Frameworks" PARENT_SCOPE)
             endif()
         endfunction()
         fixup_bundle("${_app}" "${_extra_binaries}" "${LUMINA_QT_RUNTIME_DIRS}")
+
+        # Copied framework resources may need owner-write for signing.
+        # Add owner-write only within the staged app; -P keeps symlinks unfollowed.
+        if(IS_SYMLINK "${_app}")
+            message(FATAL_ERROR "Cannot change permissions of a symlinked app: ${_app}")
+        endif()
+        execute_process(COMMAND /bin/chmod -R -P u+w "${_app}" RESULT_VARIABLE _chmod_result)
+        if(NOT _chmod_result STREQUAL "0")
+            message(FATAL_ERROR "Cannot make staged app writable: ${_app} (${_chmod_result})")
+        endif()
 
         # All relocation and stripping precede signing. Sign Mach-O files first,
         # then enclosing frameworks, and finally seal the outer app resources.
