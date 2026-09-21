@@ -132,7 +132,11 @@ namespace system_tray {
 
   // Tray menu
   static struct tray tray = {
+  #if defined(__APPLE__) || defined(__MACH__)
+    .icon = nullptr,
+  #else
     .icon = TRAY_ICON,
+  #endif
     .tooltip = PROJECT_NAME,
   #if defined(__APPLE__) || defined(__MACH__)
     .cb = tray_native_context_menu_cb,
@@ -151,8 +155,24 @@ namespace system_tray {
         {.text = nullptr}
       },
     .iconPathCount = 4,
+  #if defined(__APPLE__) || defined(__MACH__)
+    .allIconPaths = {nullptr, nullptr, nullptr, nullptr},
+  #else
     .allIconPaths = {TRAY_ICON, TRAY_ICON_LOCKED, TRAY_ICON_PLAYING, TRAY_ICON_PAUSING},
+  #endif
   };
+
+  #if defined(__APPLE__) || defined(__MACH__)
+  static void initialize_tray_icon_paths() {
+    // Clang requires constant initialization for the flexible trailing array.
+    // The immutable static strings own these paths for the tray's lifetime.
+    tray.allIconPaths[0] = TRAY_ICON;
+    tray.allIconPaths[1] = TRAY_ICON_LOCKED;
+    tray.allIconPaths[2] = TRAY_ICON_PLAYING;
+    tray.allIconPaths[3] = TRAY_ICON_PAUSING;
+    tray.icon = tray.allIconPaths[0];
+  }
+  #endif
 
   #ifdef SUNSHINE_TESTS
   const struct tray &tray_data_for_testing() {
@@ -164,6 +184,9 @@ namespace system_tray {
   }
 
   void reset_tray_data_for_testing() {
+  #if defined(__APPLE__) || defined(__MACH__)
+    initialize_tray_icon_paths();
+  #endif
     tray.icon = tray.allIconPaths[0];
     tray.tooltip = PROJECT_NAME;
     tray.notification_icon = nullptr;
@@ -238,6 +261,10 @@ namespace system_tray {
 
     tray_set_log_callback(qt_log_to_boost);
     tray_set_app_info(PROJECT_NAME, PROJECT_NAME, PROJECT_FQDN);
+
+  #if defined(__APPLE__) || defined(__MACH__)
+    initialize_tray_icon_paths();
+  #endif
 
     if (tray_init(&tray) < 0) {
       BOOST_LOG(warning) << "Failed to create system tray"sv;
