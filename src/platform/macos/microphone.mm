@@ -12,6 +12,7 @@
 #include "src/platform/common.h"
 #include "src/platform/macos/av_audio.h"
 #include "src/platform/macos/sc_audio.h"
+#include "src/stereo_pcm.h"
 
 namespace platf {
   using namespace std::literals;
@@ -59,6 +60,8 @@ namespace platf {
    */
   struct sc_mic_t: public mic_t {
     SCAudioCapture *sc_audio_capture API_AVAILABLE(macos(12.3)) {};
+    std::size_t output_channels = 2;
+    bool first_sample_logged = false;
 
     ~sc_mic_t() override {
       if (@available(macOS 12.3, *)) {
@@ -68,7 +71,14 @@ namespace platf {
 
     capture_e sample(std::vector<float> &sample_in) override {
       if (@available(macOS 12.3, *)) {
-        auto sample_size = sample_in.size();
+        if ((output_channels != 2 && output_channels != 6 && output_channels != 8) ||
+            sample_in.size() % output_channels != 0) {
+          BOOST_LOG(error) << "Invalid ScreenCaptureKit PCM output layout"sv;
+          return capture_e::error;
+        }
+        // ScreenCaptureKit supplies stereo regardless of the negotiated Opus layout.
+        // Consume the same number of temporal frames, not the output sample count.
+        const auto sample_size = (sample_in.size() / output_channels) * 2;
 
         uint32_t length = 0;
         TPCircularBuffer *buffer = [sc_audio_capture getAudioBuffer];
@@ -90,11 +100,17 @@ namespace platf {
         }
 
         const float *sampleBuffer = (float *) byteSampleBuffer;
-        std::vector<float> vectorBuffer(sampleBuffer, sampleBuffer + sample_size);
-
-        std::copy_n(std::begin(vectorBuffer), sample_size, std::begin(sample_in));
+        if (!audio::copy_stereo_to_channels(std::span<const float> {sampleBuffer, sample_size}, sample_in, output_channels)) {
+          BOOST_LOG(error) << "ScreenCaptureKit PCM channel conversion failed"sv;
+          return capture_e::error;
+        }
 
         TPCircularBufferConsume(buffer, (uint32_t) sample_size * sizeof(float));
+        if (!first_sample_logged) {
+          BOOST_LOG(info) << "ScreenCaptureKit delivered first PCM block: "sv << sample_size / 2
+                          << " frames, 2 capture channels -> "sv << output_channels << " output channels"sv;
+          first_sample_logged = true;
+        }
 
         return capture_e::ok;
       }
@@ -146,11 +162,22 @@ namespace platf {
           if ([SCAudioCapture isAvailable]) {
             BOOST_LOG(info) << "Attempting native system audio capture via ScreenCaptureKit..."sv;
 
+            if (channels != 2 && channels != 6 && channels != 8) {
+              BOOST_LOG(error) << "Unsupported ScreenCaptureKit output channel count: "sv << channels;
+              return nullptr;
+            }
             auto sc_mic = std::make_unique<sc_mic_t>();
+            sc_mic->output_channels = static_cast<std::size_t>(channels);
             sc_mic->sc_audio_capture = [[SCAudioCapture alloc] init];
 
-            if ([sc_mic->sc_audio_capture startCaptureWithSampleRate:sample_rate channels:channels] == 0) {
+            // Apple's capture API supports mono/stereo only. Keep the negotiated
+            // network layout and pad its unused speakers instead of relabeling PCM.
+            if ([sc_mic->sc_audio_capture startCaptureWithSampleRate:sample_rate channels:2] == 0) {
               BOOST_LOG(info) << "System audio capture enabled via ScreenCaptureKit!"sv;
+              if (channels > 2) {
+                BOOST_LOG(info) << "ScreenCaptureKit stereo mapped to "sv << channels
+                                << "-channel PCM: front left/right only; other speakers silent"sv;
+              }
               return sc_mic;
             } else {
               BOOST_LOG(warning) << "ScreenCaptureKit audio capture failed, falling back to other methods"sv;

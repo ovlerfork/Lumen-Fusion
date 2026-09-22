@@ -112,6 +112,7 @@ namespace audio {
                     << stream.bitrate / 1000 << " kbps (total), LOWDELAY"sv;
 
     auto frame_size = config.packetDuration * stream.sampleRate / 1000;
+    bool first_packet_logged = false;
     while (auto sample = samples->pop()) {
       buffer_t packet {1400};
 
@@ -123,6 +124,11 @@ namespace audio {
         return;
       }
 
+      if (!first_packet_logged) {
+        BOOST_LOG(info) << "First audio packet encoded: "sv << bytes << " bytes, "sv
+                        << frame_size << " samples per channel, "sv << stream.channelCount << " channels"sv;
+        first_packet_logged = true;
+      }
       packet.fake_resize(bytes);
       packets->raise(channel_data, std::move(packet));
     }
