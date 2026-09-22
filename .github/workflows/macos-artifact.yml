@@ -46,7 +46,7 @@ jobs:
           # Keep the three remaining ConfigConsistency tests and all runtime/unit tests,
           # but exclude the two Sunshine documentation-consistency checks that require it.
           mkdir -p "$DIAGNOSTICS"
-          ./test_sunshine --gtest_output="xml:$DIAGNOSTICS/gtest.xml" --gtest_filter=-ConfigConsistencyTest.AllConfigOptionsExistInAllFiles:ConfigConsistencyTest.ConfigTabsMatchDocumentationSections
+          ./test_sunshine --gtest_output="xml:$DIAGNOSTICS/gtest.xml" --gtest_filter=-ConfigConsistencyTest.AllConfigOptionsExistInAllFiles:ConfigConsistencyTest.ConfigTabsMatchDocumentationSections 2>&1 | tee "$DIAGNOSTICS/gtest.log"
       - name: Package
         run: |
           bash scripts/macos_build.sh --step=zip

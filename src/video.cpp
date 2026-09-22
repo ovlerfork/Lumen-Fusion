@@ -13,6 +13,8 @@
   // platform includes
   #include <dlfcn.h>
   #include <VideoToolbox/VideoToolbox.h>
+
+  #include "platform/macos/vt_output_completion.h"
 #endif
 
 // lib includes
@@ -198,6 +200,7 @@ extern "C" OSStatus VTCompressionSessionCreate(
   );
   if (status == noErr && compression_session_out && *compression_session_out) {
     set_videotoolbox_max_frame_delay(*compression_session_out);
+    platf::vt::log_encoder_properties(*compression_session_out);
   }
   return status;
 }
@@ -1657,8 +1660,13 @@ namespace video {
 #endif
 
     // send the frame to the encoder
+#ifdef __APPLE__
+    auto ret = platf::vt::send_frame(ctx.get(), frame);
+#else
     auto ret = avcodec_send_frame(ctx.get(), frame);
+#endif
     if (ret < 0) {
+      session.pending_frame_timestamps.erase(frame_nr);
 #ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
       session.pending_perf_timings.erase(frame_nr);
 #endif
