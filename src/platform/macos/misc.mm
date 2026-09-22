@@ -62,8 +62,6 @@ namespace platf {
 #endif
 
   namespace {
-    auto screen_capture_allowed = std::atomic<bool> {false};
-
     std::mutex streaming_power_assertion_mutex;
     IOPMAssertionID streaming_display_sleep_assertion = kIOPMNullAssertionID;
     IOPMAssertionID streaming_user_activity_assertion = kIOPMNullAssertionID;
@@ -140,40 +138,37 @@ namespace platf {
     }
   }  // namespace
 
-  // Return whether screen capture is allowed for this process.
-  bool is_screen_capture_allowed() {
-    return screen_capture_allowed;
-  }
-
-  std::unique_ptr<deinit_t> init() {
-    // This will generate a warning about CGPreflightScreenCaptureAccess and
-    // CGRequestScreenCaptureAccess being unavailable before macOS 10.15, but
-    // we have a guard to prevent it from being called on those earlier systems.
-    // Unfortunately the supported way to silence this warning, using @available,
-    // produces linker errors for __isPlatformVersionAtLeast, so we have to use
-    // a different method.
-    // We also ignore "tautological-pointer-compare" because when compiling with
-    // Xcode 12.2 and later, these functions are not weakly linked and will never
-    // be null, and therefore generate this warning. Since we are weakly linking
-    // when compiling with earlier Xcode versions, the check for null is
-    // necessary, and so we ignore the warning.
+  // Keep the legacy SDK guards, but never cache TCC's answer in the process.
+  // This read-only check is used at initialization/probe boundaries, not per frame.
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunguarded-availability-new"
 #pragma clang diagnostic ignored "-Wtautological-pointer-compare"
+  bool is_screen_capture_allowed() {
     if ([[NSProcessInfo processInfo] isOperatingSystemAtLeastVersion:((NSOperatingSystemVersion) {10, 15, 0})] &&
-        // Double check that these weakly-linked symbols have been loaded:
-        CGPreflightScreenCaptureAccess != nullptr && CGRequestScreenCaptureAccess != nullptr &&
-        !CGPreflightScreenCaptureAccess()) {
-      BOOST_LOG(error) << "No screen capture permission!"sv;
-      BOOST_LOG(error) << "Please activate it in 'System Preferences' -> 'Privacy' -> 'Screen Recording'"sv;
-      CGRequestScreenCaptureAccess();
-      return nullptr;
+        CGPreflightScreenCaptureAccess != nullptr) {
+      return CGPreflightScreenCaptureAccess();
     }
-#pragma clang diagnostic pop
-    // Record that we determined that we have the screen capture permission.
-    screen_capture_allowed = true;
+    return true;
+  }
+
+  std::unique_ptr<deinit_t> init() {
+    if (!is_screen_capture_allowed()) {
+      BOOST_LOG(info) << "Requesting macOS Screen & System Audio Recording permission"sv;
+      if (CGRequestScreenCaptureAccess != nullptr) {
+        CGRequestScreenCaptureAccess();
+      }
+      // A successful request alone does not establish access for this process.
+      // macOS may still require a full quit/relaunch after a grant or app update.
+      if (!is_screen_capture_allowed()) {
+        BOOST_LOG(error) << "Screen capture permission is not available to the running application"sv;
+        BOOST_LOG(error) << "Allow Lumen Fusion in System Settings > Privacy & Security > Screen & System Audio Recording, then fully quit and reopen the app"sv;
+        BOOST_LOG(error) << "An enabled entry from an older ad-hoc-signed build may not authorize this build; do not reset pairing or application configuration"sv;
+        return nullptr;
+      }
+    }
     return std::make_unique<deinit_t>();
   }
+#pragma clang diagnostic pop
 
 #ifdef SUNSHINE_MACOS_BUNDLE
   fs::path assets() {

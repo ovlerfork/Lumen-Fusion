@@ -14,6 +14,7 @@
   #include <dlfcn.h>
   #include <VideoToolbox/VideoToolbox.h>
 
+  #include "platform/macos/misc.h"
   #include "platform/macos/vt_output_completion.h"
 #endif
 
@@ -3056,6 +3057,13 @@ namespace video {
   }
 
   int probe_encoders() {
+#ifdef __APPLE__
+    // Recheck after grants/revocations, including when an encoder was previously found.
+    if (!platf::is_screen_capture_allowed()) {
+      BOOST_LOG(fatal) << "macOS Screen & System Audio Recording permission is missing for the running app; allow Lumen Fusion in System Settings and fully quit/reopen it before streaming."sv;
+      return -1;
+    }
+#endif
     if (!allow_encoder_probing()) {
       // Error already logged
       return -1;
