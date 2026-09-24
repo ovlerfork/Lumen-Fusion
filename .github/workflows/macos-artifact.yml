@@ -75,11 +75,15 @@ jobs:
           attached=true
           test -L "$mount_point/Applications"
           test "$(readlink "$mount_point/Applications")" = /Applications
+          test -s "$mount_point/Read Me First - 安装说明.txt"
           ditto "$mount_point/Lumen Fusion.app" "$installation/Lumen Fusion.app"
+          echo "INSTALLED_APP=$installation/Lumen Fusion.app" >> "$GITHUB_ENV"
           hdiutil detach "$mount_point"
           attached=false
           trap - EXIT
           bash scripts/validate-macos-package.sh "$installation/Lumen Fusion.app" "$DIAGNOSTICS/dmg"
+      - name: Validate opt-in login item with the installed app
+        run: python3 scripts/validate-macos-login-item.py "$INSTALLED_APP" "$DIAGNOSTICS/login-item"
       - name: Upload native test measurements
         if: always()
         uses: actions/upload-artifact@v4
@@ -88,6 +92,7 @@ jobs:
           path: |
             ${{ env.DIAGNOSTICS }}/gtest.log
             ${{ env.DIAGNOSTICS }}/gtest.xml
+            ${{ env.DIAGNOSTICS }}/login-item/login-item.log
           if-no-files-found: warn
       - name: Upload failure diagnostics
         if: failure()

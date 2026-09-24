@@ -5,6 +5,7 @@
 #ifdef __APPLE__
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -28,6 +29,11 @@ extern "C" {
 
 namespace {
   using clock_type = std::chrono::steady_clock;
+
+  struct scene_background {
+    std::vector<uint8_t> luma;
+    std::vector<uint8_t> chroma;
+  };
 
   class VideoToolboxFixture: public testing::Test {
   protected:
@@ -141,24 +147,53 @@ namespace {
       return static_cast<uint8_t>(16 + (scene * 37 + x / 7 + y / 5) % 220);
     }
 
+    std::array<scene_background, 4> precompute_scene_backgrounds() const {
+      std::array<scene_background, 4> backgrounds;
+      const size_t luma_width = context->width;
+      const size_t luma_height = context->height;
+      const size_t chroma_width = luma_width;
+      const size_t chroma_height = luma_height / 2;
+      for (int scene = 0; scene < static_cast<int>(backgrounds.size()); ++scene) {
+        scene_background &background = backgrounds[scene];
+        background.luma.resize(luma_width * luma_height);
+        background.chroma.resize(chroma_width * chroma_height);
+        for (size_t y = 0; y < luma_height; ++y) {
+          for (size_t x = 0; x < luma_width; ++x) {
+            background.luma[y * luma_width + x] = background_luma(scene, x, y);
+          }
+        }
+        for (size_t y = 0; y < chroma_height; ++y) {
+          for (size_t x = 0; x < chroma_width; x += 2) {
+            background.chroma[y * chroma_width + x] = static_cast<uint8_t>(64 + scene * 18 + (x / 13) % 45);
+            background.chroma[y * chroma_width + x + 1] = static_cast<uint8_t>(150 - scene * 15 + (y / 9) % 45);
+          }
+        }
+      }
+      return backgrounds;
+    }
+
     void paint_block(uint8_t *luma, uint8_t *chroma, size_t luma_stride, size_t chroma_stride, int scene, int block_x, int block_y) const {
       constexpr int block_width = 240;
       constexpr int block_height = 160;
       for (int y = block_y; y < block_y + block_height; ++y) {
-        for (int x = block_x; x < block_x + block_width; ++x) {
-          const uint8_t background = background_luma(scene, x, y);
-          luma[y * luma_stride + x] = static_cast<uint8_t>(16 + (background - 16 + 92) % 220);
+        uint8_t *row = luma + y * luma_stride + block_x;
+        for (int x = 0; x < block_width; ++x) {
+          const uint8_t background = row[x];
+          row[x] = background <= 143 ? static_cast<uint8_t>(background + 92) : static_cast<uint8_t>(background - 128);
         }
       }
+      const uint8_t u = static_cast<uint8_t>(94 + scene * 18);
+      const uint8_t v = static_cast<uint8_t>(125 - scene * 15);
       for (int y = block_y / 2; y < (block_y + block_height) / 2; ++y) {
-        for (int x = block_x; x < block_x + block_width; x += 2) {
-          chroma[y * chroma_stride + x] = static_cast<uint8_t>(94 + scene * 18 + (x / 13) % 45);
-          chroma[y * chroma_stride + x + 1] = static_cast<uint8_t>(125 - scene * 15 + (y / 9) % 45);
+        uint8_t *row = chroma + y * chroma_stride + block_x;
+        for (int x = 0; x < block_width; x += 2) {
+          row[x] = u;
+          row[x + 1] = v;
         }
       }
     }
 
-    void fill_background(CVPixelBufferRef buffer, int scene) const {
+    void copy_background(CVPixelBufferRef buffer, const scene_background &background) const {
       auto *luma = static_cast<uint8_t *>(CVPixelBufferGetBaseAddressOfPlane(buffer, 0));
       auto *chroma = static_cast<uint8_t *>(CVPixelBufferGetBaseAddressOfPlane(buffer, 1));
       const size_t luma_stride = CVPixelBufferGetBytesPerRowOfPlane(buffer, 0);
@@ -167,18 +202,15 @@ namespace {
       const size_t chroma_width = 2 * CVPixelBufferGetWidthOfPlane(buffer, 1);
       const size_t luma_height = CVPixelBufferGetHeightOfPlane(buffer, 0);
       const size_t chroma_height = CVPixelBufferGetHeightOfPlane(buffer, 1);
-      for (size_t y = 0; y < luma_height; ++y) {
-        for (size_t x = 0; x < luma_width; ++x) {
-          luma[y * luma_stride + x] = background_luma(scene, x, y);
-        }
-        std::memset(luma + y * luma_stride + luma_width, 16, luma_stride - luma_width);
+      for (size_t row = 0; row < luma_height; ++row) {
+        uint8_t *destination = luma + row * luma_stride;
+        std::memcpy(destination, background.luma.data() + row * luma_width, luma_width);
+        std::memset(destination + luma_width, 16, luma_stride - luma_width);
       }
-      for (size_t y = 0; y < chroma_height; ++y) {
-        for (size_t x = 0; x < chroma_width; x += 2) {
-          chroma[y * chroma_stride + x] = static_cast<uint8_t>(64 + scene * 18 + (x / 13) % 45);
-          chroma[y * chroma_stride + x + 1] = static_cast<uint8_t>(150 - scene * 15 + (y / 9) % 45);
-        }
-        std::memset(chroma + y * chroma_stride + chroma_width, 128, chroma_stride - chroma_width);
+      for (size_t row = 0; row < chroma_height; ++row) {
+        uint8_t *destination = chroma + row * chroma_stride;
+        std::memcpy(destination, background.chroma.data() + row * chroma_width, chroma_width);
+        std::memset(destination + chroma_width, 128, chroma_stride - chroma_width);
       }
     }
 
@@ -230,7 +262,7 @@ namespace {
       }
     }
 
-    void prepare_pooled_frame(int64_t pts, bool idr, int sequence) {
+    void prepare_pooled_frame(int64_t pts, bool idr, int sequence, const std::array<scene_background, 4> &backgrounds) {
       av_frame_unref(frame);
       CVPixelBufferRef buffer = nullptr;
       const CVReturn result = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pixel_buffer_pool, &buffer);
@@ -261,12 +293,18 @@ namespace {
       ASSERT_EQ(CVPixelBufferGetPlaneCount(buffer), 2u);
       ASSERT_EQ(CVPixelBufferGetPixelFormatType(buffer), kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange);
       ASSERT_NE(CVPixelBufferGetIOSurface(buffer), nullptr);
+      ASSERT_EQ(CVPixelBufferGetWidthOfPlane(buffer, 0), static_cast<size_t>(context->width));
+      ASSERT_EQ(CVPixelBufferGetHeightOfPlane(buffer, 0), static_cast<size_t>(context->height));
+      ASSERT_EQ(2 * CVPixelBufferGetWidthOfPlane(buffer, 1), static_cast<size_t>(context->width));
+      ASSERT_EQ(CVPixelBufferGetHeightOfPlane(buffer, 1), static_cast<size_t>(context->height / 2));
+      ASSERT_GE(CVPixelBufferGetBytesPerRowOfPlane(buffer, 0), CVPixelBufferGetWidthOfPlane(buffer, 0));
+      ASSERT_GE(CVPixelBufferGetBytesPerRowOfPlane(buffer, 1), 2 * CVPixelBufferGetWidthOfPlane(buffer, 1));
 
       const int scene = (sequence / 45) % 4;
       const int block_x = 2 * ((sequence * 23) % ((context->width - 240) / 2));
       const int block_y = 2 * ((sequence * 11) % ((context->height - 160) / 2));
       ASSERT_EQ(CVPixelBufferLockBaseAddress(buffer, 0), kCVReturnSuccess);
-      fill_background(buffer, scene);
+      copy_background(buffer, backgrounds[scene]);
       paint_block(
         static_cast<uint8_t *>(CVPixelBufferGetBaseAddressOfPlane(buffer, 0)),
         static_cast<uint8_t *>(CVPixelBufferGetBaseAddressOfPlane(buffer, 1)),
@@ -388,6 +426,7 @@ namespace {
   TEST_P(VideoToolboxPacedMeasurement, Native60FpsMotionTail) {
     ASSERT_NO_FATAL_FAILURE(initialize(GetParam()));
     ASSERT_NO_FATAL_FAILURE(initialize_pixel_buffer_pool());
+    const auto scene_backgrounds = precompute_scene_backgrounds();
     constexpr int warmup_frames = 30;
     constexpr int measured_frames = 180;
     constexpr int total_frames = warmup_frames + measured_frames;
@@ -395,6 +434,9 @@ namespace {
     constexpr int64_t first_pts = 1000;
     struct pending_frame {
       clock_type::time_point submitted;
+      double generation_ms;
+      double submit_gap_ms;
+      int skipped_ticks_before;
       bool idr;
       bool measured;
       int source_tick;
@@ -403,6 +445,9 @@ namespace {
       const char *phase;
       int source_tick;
       int64_t pts;
+      double generation_ms;
+      double submit_gap_ms;
+      int skipped_ticks_before;
       double submit_ms;
       double output_ms;
       double interarrival_ms;
@@ -414,19 +459,28 @@ namespace {
     };
     std::map<int64_t, pending_frame> pending;
     std::vector<frame_metric> frame_metrics;
+    std::vector<double> warmup_generation_ms;
+    std::vector<double> warmup_submit_gap_ms;
     std::vector<double> warmup_submit_to_output_ms;
     std::vector<double> warmup_interarrival_ms;
+    std::vector<double> measured_generation_ms;
+    std::vector<double> measured_submit_gap_ms;
     std::vector<double> measured_submit_to_output_ms;
     std::vector<double> measured_interarrival_ms;
     frame_metrics.reserve(total_frames);
+    warmup_generation_ms.reserve(warmup_frames);
+    warmup_submit_gap_ms.reserve(warmup_frames - 1);
     warmup_submit_to_output_ms.reserve(warmup_frames);
     warmup_interarrival_ms.reserve(warmup_frames - 1);
+    measured_generation_ms.reserve(measured_frames);
+    measured_submit_gap_ms.reserve(measured_frames - 1);
     measured_submit_to_output_ms.reserve(measured_frames);
     measured_interarrival_ms.reserve(measured_frames - 1);
     std::optional<clock_type::time_point> previous_warmup_output;
     std::optional<clock_type::time_point> previous_measured_output;
     std::optional<clock_type::time_point> first_measured_output;
     std::optional<clock_type::time_point> last_measured_output;
+    double cold_first_generation_ms = -1.0;
     double cold_first_submit_to_output_ms = -1.0;
     int received = 0;
     int warmup_source_skipped_ticks = 0;
@@ -488,6 +542,9 @@ namespace {
           submitted.measured ? "measured" : "warmup",
           submitted.source_tick,
           packet->pts,
+          submitted.generation_ms,
+          submitted.submit_gap_ms,
+          submitted.skipped_ticks_before,
           std::chrono::duration<double, std::milli>(submitted.submitted - started).count(),
           std::chrono::duration<double, std::milli>(output_at - started).count(),
           interarrival_ms,
@@ -516,6 +573,7 @@ namespace {
 
     int source_tick = 0;
     std::optional<bool> previous_submission_measured;
+    std::optional<clock_type::time_point> previous_submitted_at;
     for (int submitted_count = 0; submitted_count < total_frames; ++submitted_count) {
       const int next_tick = source_tick;
       const auto ready_at = clock_type::now();
@@ -527,6 +585,7 @@ namespace {
 
       const bool measured = submitted_count >= warmup_frames;
       const int due_tick = std::max(source_tick, tick_due_at(clock_type::now()));
+      const int skipped_ticks_before = due_tick - next_tick;
       if (due_tick > next_tick) {
         // Omit expired source ticks instead of submitting an old frame or catching up.
         // The gap belongs to the interval after the preceding submitted frame.
@@ -538,14 +597,26 @@ namespace {
 
       const bool idr = submitted_count % target_fps == 0;
       const int64_t pts = first_pts + source_tick;
-      ASSERT_NO_FATAL_FAILURE(prepare_pooled_frame(pts, idr, source_tick));
-      // The timestamp starts after pixel generation, so submission-to-packet time
-      // remains a submission metric while generation still affects source cadence.
+      const auto generation_started = clock_type::now();
+      ASSERT_NO_FATAL_FAILURE(prepare_pooled_frame(pts, idr, source_tick, scene_backgrounds));
       const auto submitted_at = clock_type::now();
-      ASSERT_TRUE(pending.emplace(pts, pending_frame {submitted_at, idr, measured, source_tick}).second);
+      const double generation_ms = std::chrono::duration<double, std::milli>(submitted_at - generation_started).count();
+      const double submit_gap_ms = previous_submitted_at ?
+        std::chrono::duration<double, std::milli>(submitted_at - *previous_submitted_at).count() : -1.0;
+      ASSERT_TRUE(pending.emplace(pts, pending_frame {submitted_at, generation_ms, submit_gap_ms, skipped_ticks_before, idr, measured, source_tick}).second);
       max_pending = std::max(max_pending, pending.size());
       ASSERT_EQ(platf::vt::send_frame(context, frame), 0);
       EXPECT_EQ(receive(), AVERROR(EAGAIN));
+      auto &generation_samples = measured ? measured_generation_ms : warmup_generation_ms;
+      generation_samples.push_back(generation_ms);
+      if (previous_submitted_at && previous_submission_measured == measured) {
+        auto &submit_gap_samples = measured ? measured_submit_gap_ms : warmup_submit_gap_ms;
+        submit_gap_samples.push_back(submit_gap_ms);
+      }
+      if (!previous_submitted_at) {
+        cold_first_generation_ms = generation_ms;
+      }
+      previous_submitted_at = submitted_at;
       ASSERT_TRUE(pending.empty()) << "Output backlog remains after completed submission";
       ASSERT_EQ(received, submitted_count + 1);
 
@@ -566,32 +637,45 @@ namespace {
       static_cast<double>(measured_frames - 1) / measured_elapsed_seconds : 0.0;
 
     std::cout << "VT_PACED_FRAME_CSV_BEGIN\n";
-    std::cout << "record,codec,phase,source_tick,pts,submit_ms,output_ms,interarrival_ms,submit_to_output_ms,backlog,idr_requested,key_packet,idr_nal\n";
+    std::cout << "record,codec,phase,source_tick,pts,generation_ms,submit_gap_ms,skipped_ticks_before,submit_ms,output_ms,interarrival_ms,submit_to_output_ms,backlog,idr_requested,key_packet,idr_nal\n";
     std::cout << std::fixed << std::setprecision(3);
     for (const frame_metric &metric : frame_metrics) {
       std::cout << "frame," << GetParam() << ',' << metric.phase << ',' << metric.source_tick << ',' << metric.pts << ','
+                << metric.generation_ms << ',' << metric.submit_gap_ms << ',' << metric.skipped_ticks_before << ','
                 << metric.submit_ms << ',' << metric.output_ms << ',' << metric.interarrival_ms << ',' << metric.submit_to_output_ms << ','
                 << metric.backlog << ',' << metric.idr_requested << ',' << metric.key_packet << ',' << metric.idr_nal << '\n';
     }
     std::cout << "VT_PACED_FRAME_CSV_END\n";
     std::cout << "VT_PACED_SUMMARY_CSV_BEGIN\n";
-    std::cout << "record,codec,target_fps,bitrate,warmup_frames,warmup_received,warmup_submit_to_output_p50_ms,warmup_submit_to_output_p95_ms,warmup_submit_to_output_p99_ms,warmup_submit_to_output_max_ms,warmup_interarrival_p50_ms,warmup_interarrival_p95_ms,warmup_interarrival_p99_ms,warmup_interarrival_max_ms,warmup_source_skipped_ticks,measured_frames,measured_received,measured_submit_to_output_p50_ms,measured_submit_to_output_p95_ms,measured_submit_to_output_p99_ms,measured_submit_to_output_max_ms,measured_interarrival_p50_ms,measured_interarrival_p95_ms,measured_interarrival_p99_ms,measured_interarrival_max_ms,measured_source_skipped_ticks,cold_first_submit_to_output_ms,measured_elapsed_seconds,elapsed_effective_fps,max_pending,final_backlog\n";
+    std::cout << "record,codec,target_fps,bitrate,warmup_frames,warmup_received,warmup_generation_p50_ms,warmup_generation_p95_ms,warmup_generation_p99_ms,warmup_generation_max_ms,warmup_submit_gap_p50_ms,warmup_submit_gap_p95_ms,warmup_submit_gap_p99_ms,warmup_submit_gap_max_ms,warmup_submit_to_output_p50_ms,warmup_submit_to_output_p95_ms,warmup_submit_to_output_p99_ms,warmup_submit_to_output_max_ms,warmup_interarrival_p50_ms,warmup_interarrival_p95_ms,warmup_interarrival_p99_ms,warmup_interarrival_max_ms,warmup_source_skipped_ticks,measured_frames,measured_received,measured_generation_p50_ms,measured_generation_p95_ms,measured_generation_p99_ms,measured_generation_max_ms,measured_submit_gap_p50_ms,measured_submit_gap_p95_ms,measured_submit_gap_p99_ms,measured_submit_gap_max_ms,measured_submit_to_output_p50_ms,measured_submit_to_output_p95_ms,measured_submit_to_output_p99_ms,measured_submit_to_output_max_ms,measured_interarrival_p50_ms,measured_interarrival_p95_ms,measured_interarrival_p99_ms,measured_interarrival_max_ms,measured_source_skipped_ticks,cold_first_generation_ms,cold_first_submit_to_output_ms,measured_elapsed_seconds,elapsed_effective_fps,max_pending,final_backlog\n";
     std::cout << "summary," << GetParam() << ',' << target_fps << ',' << context->bit_rate << ','
               << warmup_frames << ',' << warmup_submit_to_output_ms.size() << ','
+              << percentile(warmup_generation_ms, 0.50) << ',' << percentile(warmup_generation_ms, 0.95) << ','
+              << percentile(warmup_generation_ms, 0.99) << ',' << percentile(warmup_generation_ms, 1.00) << ','
+              << percentile(warmup_submit_gap_ms, 0.50) << ',' << percentile(warmup_submit_gap_ms, 0.95) << ','
+              << percentile(warmup_submit_gap_ms, 0.99) << ',' << percentile(warmup_submit_gap_ms, 1.00) << ','
               << percentile(warmup_submit_to_output_ms, 0.50) << ',' << percentile(warmup_submit_to_output_ms, 0.95) << ','
               << percentile(warmup_submit_to_output_ms, 0.99) << ',' << percentile(warmup_submit_to_output_ms, 1.00) << ','
               << percentile(warmup_interarrival_ms, 0.50) << ',' << percentile(warmup_interarrival_ms, 0.95) << ','
               << percentile(warmup_interarrival_ms, 0.99) << ',' << percentile(warmup_interarrival_ms, 1.00) << ','
               << warmup_source_skipped_ticks << ',' << measured_frames << ',' << measured_submit_to_output_ms.size() << ','
+              << percentile(measured_generation_ms, 0.50) << ',' << percentile(measured_generation_ms, 0.95) << ','
+              << percentile(measured_generation_ms, 0.99) << ',' << percentile(measured_generation_ms, 1.00) << ','
+              << percentile(measured_submit_gap_ms, 0.50) << ',' << percentile(measured_submit_gap_ms, 0.95) << ','
+              << percentile(measured_submit_gap_ms, 0.99) << ',' << percentile(measured_submit_gap_ms, 1.00) << ','
               << percentile(measured_submit_to_output_ms, 0.50) << ',' << percentile(measured_submit_to_output_ms, 0.95) << ','
               << percentile(measured_submit_to_output_ms, 0.99) << ',' << percentile(measured_submit_to_output_ms, 1.00) << ','
               << percentile(measured_interarrival_ms, 0.50) << ',' << percentile(measured_interarrival_ms, 0.95) << ','
               << percentile(measured_interarrival_ms, 0.99) << ',' << percentile(measured_interarrival_ms, 1.00) << ','
-              << measured_source_skipped_ticks << ',' << cold_first_submit_to_output_ms << ',' << measured_elapsed_seconds << ','
+              << measured_source_skipped_ticks << ',' << cold_first_generation_ms << ',' << cold_first_submit_to_output_ms << ',' << measured_elapsed_seconds << ','
               << effective_fps << ',' << max_pending << ',' << pending.size() << '\n';
     std::cout << "VT_PACED_SUMMARY_CSV_END\n";
+    EXPECT_EQ(warmup_generation_ms.size(), warmup_frames);
+    EXPECT_EQ(warmup_submit_gap_ms.size(), warmup_frames - 1);
     EXPECT_EQ(warmup_submit_to_output_ms.size(), warmup_frames);
     EXPECT_EQ(warmup_interarrival_ms.size(), warmup_frames - 1);
+    EXPECT_EQ(measured_generation_ms.size(), measured_frames);
+    EXPECT_EQ(measured_submit_gap_ms.size(), measured_frames - 1);
     EXPECT_EQ(measured_submit_to_output_ms.size(), measured_frames);
     EXPECT_EQ(measured_interarrival_ms.size(), measured_frames - 1);
     EXPECT_EQ(frame_metrics.size(), total_frames);
