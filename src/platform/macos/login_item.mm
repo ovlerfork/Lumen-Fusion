@@ -134,7 +134,7 @@ static LoginItemPanelController *active_panel_controller = nil;
     [content addSubview:description];
 
     _checkbox = [[NSButton alloc] initWithFrame:NSMakeRect(20, 164, 412, 26)];
-    [_checkbox setButtonType:NSSwitchButton];
+    [_checkbox setButtonType:NSButtonTypeSwitch];
     [_checkbox setTitle:chinese ? @"登录时启动 Lumen Fusion" : @"Launch Lumen Fusion at login"];
     [_checkbox setTarget:self];
     [_checkbox setAction:@selector(checkboxChanged:)];
@@ -224,7 +224,7 @@ static LoginItemPanelController *active_panel_controller = nil;
     [self refresh];
     [_panel center];
     [_panel makeKeyAndOrderFront:nil];
-    [NSApp activateIgnoringOtherApps:YES];
+    [NSApp activate];
   }
 
   - (void)windowDidBecomeKey:(NSNotification *)notification {
