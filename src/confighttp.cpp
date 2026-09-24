@@ -36,6 +36,7 @@
 #include "file_handler.h"
 #include "globals.h"
 #include "httpcommon.h"
+#include "http_log.h"
 #include "logging.h"
 #include "network.h"
 #include "nvhttp.h"
@@ -85,13 +86,13 @@ namespace confighttp {
     BOOST_LOG(debug) << "DESTINATION :: "sv << request->path;
 
     for (auto &[name, val] : request->header) {
-      BOOST_LOG(debug) << name << " -- " << (name == "Authorization" ? "CREDENTIALS REDACTED" : val);
+      BOOST_LOG(debug) << name << " -- " << http::diagnostic_value(name, val);
     }
 
     BOOST_LOG(debug) << " [--] "sv;
 
     for (auto &[name, val] : request->parse_query_string()) {
-      BOOST_LOG(debug) << name << " -- " << val;
+      BOOST_LOG(debug) << name << " -- " << http::diagnostic_value(name, val);
     }
 
     BOOST_LOG(debug) << " [--] "sv;
