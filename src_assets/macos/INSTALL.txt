@@ -1,0 +1,58 @@
+Lumen Fusion — 安装 / Installation
+
+需要 Apple Silicon Mac，macOS 15 或更新版本。
+Requires an Apple Silicon Mac running macOS 15 or later.
+
+1. 升级前，从旧版菜单栏选择 Quit，完全退出应用。
+   When upgrading, quit the old app from its menu bar first.
+
+2. 将 Lumen Fusion.app 拖到旁边的 Applications 文件夹。
+   Drag Lumen Fusion.app to the Applications folder beside it.
+
+3. 弹出这个磁盘镜像，然后从 Applications 打开 Lumen Fusion。
+   Eject this disk image, then open Lumen Fusion from Applications.
+
+这是菜单栏应用，不一定显示 Dock 图标或主窗口。
+从菜单栏打开管理页面，设置管理员账号并与 Moonlight / VoidLink 配对。
+This is a menu-bar app. Open its web interface from the menu bar to set up
+an administrator account and pair your Moonlight / VoidLink client.
+
+首次运行 / First launch
+
+本预览版使用 ad-hoc 签名，未做 Apple 公证。如果 macOS 提示无法验证开发者，
+确认下载来源后，在“系统设置 → 隐私与安全性”中使用该应用的“仍要打开”。
+This preview is ad-hoc signed, not notarized. If macOS cannot verify its developer,
+verify the download source and use the app-specific Open Anyway action in
+System Settings → Privacy & Security.
+
+按提示授予“录屏与系统录音”和远程键鼠控制所需的“辅助功能”权限。
+系统要求退出并重新打开时，请执行该操作。升级后可能需要重新授权。
+Grant Screen & System Audio Recording, and Accessibility for remote keyboard/mouse
+control. Relaunch when macOS asks. An update may require authorization again.
+
+系统音频已经内置，无需安装 BlackHole。音频设备留空或填写 system。
+Built-in system audio needs no BlackHole driver. Leave the audio device blank
+or use system.
+
+自动启动 / Launch at login
+
+自动启动默认关闭。安装到 Applications 后，在菜单栏的登录启动设置中勾选启用。
+状态为“需要批准”时，打开系统登录项设置，由你确认允许。
+可随时取消勾选；应用不会在启动时偷偷重新启用。
+Launch at login is off by default. After installing in Applications, enable it
+in the menu-bar login settings. If approval is required, open the system Login
+Items settings and approve it yourself. You can disable it at any time.
+
+保留现有配置和配对 / Existing settings and pairing
+
+配置继续位于 ~/.config/lumina。替换 .app 不会清空它。
+不要使用旧的 ~/.local/bin/lumen-fusion 命令测试新 .app，它可能指向旧安装。
+Settings remain in ~/.config/lumina. Replacing the .app does not erase them.
+The legacy ~/.local/bin/lumen-fusion command may still run an older installation.
+
+无需终端安装命令、Homebrew、sudo，也不需要关闭 SIP、AMFI 或 Gatekeeper。
+No terminal installer, Homebrew or sudo is required. Do not disable SIP, AMFI
+or Gatekeeper.
+
+公开发布 / Releases
+https://github.com/ovlerfork/Lumen-Fusion/releases

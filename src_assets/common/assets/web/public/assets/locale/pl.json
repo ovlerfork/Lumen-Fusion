@@ -150,7 +150,7 @@
     "apply_note": "Kliknij \"Zastosuj\", aby ponownie uruchomić Lumina i zastosować zmiany. Spowoduje to zakończenie wszystkich uruchomionych sesji.",
     "audio_sink": "Wejście audio",
     "audio_sink_desc_linux": "Nazwa odbiornika audio używanego dla Audio Loopback. Jeśli nie określisz tej zmiennej, pulseaudio wybierze domyślne urządzenie monitorujące. Nazwę urządzenia audio można znaleźć za pomocą polecenia:",
-    "audio_sink_desc_macos": "Nazwa odbiornika audio używanego dla Audio Loopback. Lumina może uzyskać dostęp do mikrofonów tylko w systemie macOS ze względu na ograniczenia systemowe. Aby przesyłać strumieniowo dźwięk systemowy za pomocą Soundflower lub BlackHole.",
+    "audio_sink_desc_macos": "Pozostaw puste lub wpisz „system”, aby przechwytywać stereofoniczny dźwięk systemowy przez ScreenCaptureKit. Wymagane jest uprawnienie do nagrywania ekranu/dźwięku systemowego. Wirtualne urządzenia audio są opcjonalne.",
     "audio_sink_desc_windows": "Ręczne określenie konkretnego urządzenia audio do przechwytywania. Jeśli nie jest ustawione, urządzenie zostanie wybrane automatycznie. Zdecydowanie zalecamy pozostawienie tego pola pustego, aby korzystać z automatycznego wyboru urządzenia! Jeśli masz wiele urządzeń audio o identycznych nazwach, możesz uzyskać identyfikator urządzenia za pomocą następującego polecenia:",
     "audio_sink_placeholder_macos": "BlackHole 2ch",
     "audio_sink_placeholder_windows": "Głośniki (High Definition Audio Device)",

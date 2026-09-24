@@ -150,7 +150,7 @@
     "apply_note": "Haga clic en 'Aplicar' para reiniciar Lumina y aplicar los cambios. Esto terminará cualquier sesión en ejecución.",
     "audio_sink": "Salida de audio",
     "audio_sink_desc_linux": "El nombre de la salida de audio usado para Audio Loopback. Si no especifica esta variable, pulseaudio seleccionará el dispositivo de monitor predeterminado. Puede encontrar el nombre de la salida de audio usando cualquiera de los comandos:",
-    "audio_sink_desc_macos": "El nombre de la salida de audio usado para Audio Loopback. Lumina sólo puede acceder a micrófonos en macOS debido a limitaciones del sistema. Para transmitir audio del sistema usando Soundflower o BlackHole.",
+    "audio_sink_desc_macos": "Déjelo en blanco o escriba \"system\" para capturar audio estéreo del sistema con ScreenCaptureKit. Se requiere permiso de Grabación de pantalla/audio del sistema. Los dispositivos de audio virtuales son opcionales.",
     "audio_sink_desc_windows": "Especifique manualmente un dispositivo de audio específico para capturar. Si no está activado, el dispositivo se elige automáticamente. ¡Recomendamos encarecidamente dejar este campo en blanco para usar la selección automática de dispositivos! Si tiene varios dispositivos de audio con nombres idénticos, puede obtener el ID del dispositivo usando el siguiente comando:",
     "audio_sink_placeholder_macos": "BlackHole 2ch",
     "audio_sink_placeholder_windows": "Altavoces (Dispositivo de audio de alta definición)",

@@ -150,7 +150,7 @@
     "apply_note": "Kliknutím na tlačítko \"Použít\" restartujte Lumina a aplikujte změny. Tím se ukončí všechny spuštěné relace.",
     "audio_sink": "Zvukový výřez",
     "audio_sink_desc_linux": "Název skluzu zvuku, který se používá pro zvukovou smyčku. Pokud tuto proměnnou nevyberete, pulseaudio zvolí výchozí zařízení pro monitor. Název sklízení zvuku můžete najít pomocí některého příkazu:",
-    "audio_sink_desc_macos": "Název zvukového výstupu použitého pro funkci Audio Loopback. Chcete-li použít vestavěný systémový záznam zvuku, nechte toto pole prázdné. Případně můžete zadat virtuální zařízení, jako je například Soundflower nebo BlackHole, pokud vám to vyhovuje.",
+    "audio_sink_desc_macos": "Nechte prázdné nebo zadejte „system“ pro stereofonní záznam systémového zvuku přes ScreenCaptureKit. Je vyžadováno oprávnění k nahrávání obrazovky a systémového zvuku. Virtuální zvuková zařízení jsou volitelná.",
     "audio_sink_desc_windows": "Ručně zadejte konkrétní zvukové zařízení pro zachycení. Pokud je zařízení odstaveno, je vybráno automaticky. Důrazně doporučujeme ponechat toto pole prázdné pro automatický výběr zařízení! Pokud máte více zvukových zařízení se stejnými jmény, můžete získat ID zařízení pomocí následujícího příkazu:",
     "audio_sink_placeholder_macos": "BlackHole 2ch",
     "audio_sink_placeholder_windows": "Reproduktory (High Definition Audio Device)",

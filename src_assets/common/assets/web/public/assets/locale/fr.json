@@ -150,7 +150,7 @@
     "apply_note": "Cliquez sur \"Appliquer\" pour redémarrer Lumina et appliquer les modifications. Cela mettra fin à toutes les sessions en cours.",
     "audio_sink": "Sortie audio",
     "audio_sink_desc_linux": "Le nom de la sortie audio utilisée pour le retour audio. Si vous ne spécifiez pas cette variable, PulseAudio sélectionnera le périphérique de moniteur par défaut. Vous pouvez trouver le nom de la sortie audio en utilisant l'une des commandes suivantes :",
-    "audio_sink_desc_macos": "Le nom de la sortie audio utilisée pour le retour audio. Lumina ne peut accéder qu'aux micros sur macOS en raison de limitations du système. Pour diffuser l'audio du système, utilisez Soundflower ou BlackHole.",
+    "audio_sink_desc_macos": "Laissez vide ou saisissez « system » pour capturer l’audio stéréo du système avec ScreenCaptureKit. L’autorisation d’enregistrement d’écran/de l’audio système est requise. Les périphériques audio virtuels sont facultatifs.",
     "audio_sink_desc_windows": "Spécifiez manuellement un périphérique audio spécifique à capturer. Si non défini, le périphérique est choisi automatiquement. Nous vous recommandons fortement de laisser ce champ vide pour utiliser la sélection automatique de l'appareil ! Si vous avez plusieurs périphériques audio avec des noms identiques, vous pouvez obtenir l'ID du périphérique en utilisant la commande suivante :",
     "audio_sink_placeholder_macos": "BlackHole 2ch",
     "audio_sink_placeholder_windows": "Haut-parleurs (High Definition Audio Device)",

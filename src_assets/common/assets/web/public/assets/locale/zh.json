@@ -150,7 +150,7 @@
     "apply_note": "点击“应用”重启 Lumina 并应用更改。这将终止任何正在运行的会话。",
     "audio_sink": "音频输出设备",
     "audio_sink_desc_linux": "手动指定需要抓取的音频输出设备。如果您没有指定此变量，PulseAudio 将选择默认监测设备。 您可以使用以下任何命令找到音频输出设备的名称：",
-    "audio_sink_desc_macos": "手动指定需要抓取的音频输出设备。由于系统限制，Lumina 在 macOS 上只能访问麦克风。 使用 Soundflow 或 BlackHole 来串流系统音频。",
+    "audio_sink_desc_macos": "留空或输入“system”，即可通过 ScreenCaptureKit 抓取立体声系统音频。需要授予屏幕录制和系统音频权限。虚拟音频设备可选，不是必需项。",
     "audio_sink_desc_windows": "手动指定要捕获的特定音频设备。如果未设置，则自动选择该设备。 我们强烈建议将此字段留空以使用自动选择设备！ 如果您有多个具有相同名称的音频设备，您可以使用以下命令获取设备ID：",
     "audio_sink_placeholder_macos": "BlackHole 2ch",
     "audio_sink_placeholder_windows": "扬声器（High Definition Audio Device）",

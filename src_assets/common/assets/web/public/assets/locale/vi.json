@@ -150,7 +150,7 @@
     "apply_note": "Nhấp vào 'Áp dụng' để khởi động lại Lumina và áp dụng các thay đổi. Điều này sẽ kết thúc tất cả các phiên đang chạy.",
     "audio_sink": "Bộ thu âm thanh",
     "audio_sink_desc_linux": "Tên của thiết bị âm thanh được sử dụng cho vòng lặp âm thanh (Audio Loopback). Nếu bạn không chỉ định biến này, pulseaudio sẽ chọn thiết bị monitor mặc định. Bạn có thể tìm tên của thiết bị âm thanh bằng một trong hai lệnh sau:",
-    "audio_sink_desc_macos": "Tên của thiết bị đầu ra âm thanh được sử dụng cho Audio Loopback. Lumina chỉ có thể truy cập micro trên macOS do hạn chế của hệ thống. Để phát âm thanh hệ thống thông qua Soundflower hoặc BlackHole.",
+    "audio_sink_desc_macos": "Để trống hoặc nhập \"system\" để thu âm thanh hệ thống stereo bằng ScreenCaptureKit. Cần cấp quyền Ghi màn hình/âm thanh hệ thống. Thiết bị âm thanh ảo là tùy chọn.",
     "audio_sink_desc_windows": "Chọn thủ công thiết bị âm thanh cụ thể để ghi âm. Nếu không được thiết lập, thiết bị sẽ được chọn tự động. Chúng tôi khuyến nghị mạnh mẽ để để trống trường này để sử dụng tính năng chọn thiết bị tự động! Nếu bạn có nhiều thiết bị âm thanh có tên giống nhau, bạn có thể lấy ID thiết bị bằng cách sử dụng lệnh sau:",
     "audio_sink_placeholder_macos": "Lỗ đen 2ch",
     "audio_sink_placeholder_windows": "Loa (Thiết bị âm thanh độ nét cao)",

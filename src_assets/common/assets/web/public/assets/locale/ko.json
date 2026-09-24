@@ -150,7 +150,7 @@
     "apply_note": "'적용'을 클릭하여 설정을 적용합니다. Lumina이 다시 시작되며 연결된 모든 세션이 종료됩니다.",
     "audio_sink": "오디오 싱크",
     "audio_sink_desc_linux": "오디오 루프백에 사용되는 오디오 싱크의 이름입니다. 이 변수를 지정하지 않으면 pulseaudio가 기본 모니터 장치를 선택합니다. 오디오 싱크의 이름은 다음 명령을 사용하여 찾을 수 있습니다:",
-    "audio_sink_desc_macos": "오디오 루프백에 사용되는 오디오 싱크의 이름입니다. Lumina은 시스템 제한으로 인해 macOS에서만 마이크에 액세스할 수 있습니다. 사운드플라워 또는 블랙홀을 사용하여 시스템 오디오를 스트리밍하려면.",
+    "audio_sink_desc_macos": "비워 두거나 “system”을 입력하면 ScreenCaptureKit으로 스테레오 시스템 오디오를 캡처합니다. 화면 기록/시스템 오디오 권한이 필요합니다. 가상 오디오 장치는 선택 사항입니다.",
     "audio_sink_desc_windows": "캡처할 특정 오디오 장치를 수동으로 지정합니다. 설정하지 않으면 장치가 자동으로 선택됩니다. 자동 장치 선택을 사용하려면 이 필드를 비워 두는 것이 좋습니다! 동일한 이름의 오디오 장치가 여러 개 있는 경우 다음 명령을 사용하여 장치 ID를 얻을 수 있습니다:",
     "audio_sink_placeholder_macos": "블랙홀 2채널",
     "audio_sink_placeholder_windows": "Speakers (High Definition Audio Device)",

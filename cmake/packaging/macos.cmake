@@ -7,6 +7,8 @@ if(SUNSHINE_PACKAGE_MACOS)
     install(PROGRAMS "$<TARGET_FILE:vd_helper>"
             DESTINATION "${_app}/Contents/MacOS" COMPONENT Runtime)
     install(FILES "${PROJECT_SOURCE_DIR}/LICENSE" DESTINATION . COMPONENT Runtime)
+    install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/macos/INSTALL.txt"
+            DESTINATION . RENAME "Read Me First - 安装说明.txt" COMPONENT Runtime)
     install(FILES "${PROJECT_SOURCE_DIR}/sunshine.icns"
             DESTINATION "${_resources}" COMPONENT Runtime)
     install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/macos/assets/"

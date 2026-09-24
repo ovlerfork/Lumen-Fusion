@@ -150,7 +150,7 @@
     "apply_note": "Lumina'ı yeniden başlatmak ve değişiklikleri uygulamak için 'Uygula'ya tıklayın. Bu, çalışan tüm oturumları sonlandıracaktır.",
     "audio_sink": "Ses Hedefi",
     "audio_sink_desc_linux": "Ses Döngü Yönlendirmesi için kullanılan ses çıkışının adı. Bu değişkeni belirtmezseniz, pulseaudio varsayılan monitor aygıtını seçecektir. Ses çıkışının adını şu komutlardan biriyle bulabilirsiniz:",
-    "audio_sink_desc_macos": "Ses Döngü Yönlendirmesi için kullanılan ses çıkışının adı. Lumina, sistem kısıtlamaları nedeniyle macOS'te yalnızca mikrofonlara erişebilir. Sistem sesini Soundflower veya BlackHole kullanarak yayınlamak mümkündür.",
+    "audio_sink_desc_macos": "ScreenCaptureKit ile stereo sistem sesini yakalamak için boş bırakın veya \"system\" yazın. Ekran Kaydı/sistem sesi izni gerekir. Sanal ses aygıtları isteğe bağlıdır.",
     "audio_sink_desc_windows": "Yakalanacak belirli bir ses cihazını manuel olarak belirleyin. Ayarlanmamışsa, cihaz otomatik olarak seçilir. Otomatik cihaz seçimini kullanmak için bu alanı boş bırakmanızı şiddetle tavsiye ederiz! Aynı ada sahip birden fazla ses cihazınız varsa, aşağıdaki komutu kullanarak Cihaz Kimliğini alabilirsiniz:",
     "audio_sink_placeholder_macos": "BlackHole 2ch",
     "audio_sink_placeholder_windows": "Hoparlörler (Yüksek Çözünürlüklü Ses Cihazı)",

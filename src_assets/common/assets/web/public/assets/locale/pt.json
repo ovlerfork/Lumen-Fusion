@@ -150,7 +150,7 @@
     "apply_note": "Clique em 'Aplicar' para reiniciar o Lumina e aplicar as alterações. Isto encerrará todas as sessões em execução.",
     "audio_sink": "Pia de Áudio",
     "audio_sink_desc_linux": "O nome do afundamento de áudio usado para o loop de áudio. Se você não especificar esta variável, o pulseaudio selecionará o dispositivo de monitor padrão. Você pode encontrar o nome do sumidouro de áudio usando qualquer comando:",
-    "audio_sink_desc_macos": "O nome do sumidouro de áudio usado para o loop de áudio. O Lumina só pode acessar microfones no macOS devido a limitações do sistema. Para fazer streaming de áudio do sistema usando Soundflower ou BlackHole.",
+    "audio_sink_desc_macos": "Deixe em branco ou introduza \"system\" para capturar áudio estéreo do sistema com o ScreenCaptureKit. É necessária permissão para Gravação de ecrã/áudio do sistema. Os dispositivos de áudio virtuais são opcionais.",
     "audio_sink_desc_windows": "Especifique manualmente um dispositivo de áudio específico para capturar. Se não for definido, o dispositivo será escolhido automaticamente. Recomendamos fortemente deixar este campo em branco para usar a seleção automática de dispositivo! Se você tiver vários dispositivos de áudio com nomes idênticos, você pode obter o ID do dispositivo usando o seguinte comando:",
     "audio_sink_placeholder_macos": "BlackHole 2ch",
     "audio_sink_placeholder_windows": "Alto-falantes (Dispositivo de Áudio de Alta Definição)",
