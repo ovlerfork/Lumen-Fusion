@@ -35,9 +35,24 @@ def validate(source: Path, diagnostics: Path) -> None:
     try:
         subprocess.run(["/usr/bin/ditto", str(source), str(app)], check=True)
         subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(app)], check=True)
+        code, before_launch = command("status")
+        if code or before_launch not in {"not_registered", "not_found"}:
+            raise RuntimeError(f"Refusing to modify an existing login item: {before_launch} (exit {code})")
+        print(f"Direct status before first LaunchServices launch: {before_launch}", flush=True)
+        # Exercise Finder's LaunchServices path for this new installation before
+        # querying a main-app service. A file copy plus direct CLI execution does
+        # not establish that macOS has catalogued the relocated application.
+        startup_diagnostics = diagnostics / "installed-startup"
+        startup_diagnostics.mkdir(exist_ok=True)
+        subprocess.run([sys.executable, str(Path(__file__).with_name("validate-macos-startup.py")),
+                        str(app), str(startup_diagnostics)], check=True, timeout=180)
         code, initial = command("status")
-        if code or initial != "not_registered":
+        if code or initial not in {"not_registered", "not_found"}:
             raise RuntimeError(f"Refusing to modify a pre-existing or unknown login item: {initial} (exit {code})")
+        # A never-registered main-app service may not yet have a record. Preserve
+        # that observation, then test the explicit registration action; notFound
+        # is NEVER an acceptable result after enable. Existing approval is untouched.
+        print(f"Initial main-app service state: {initial}", flush=True)
         # Explicit registration in a disposable account, never an approval bypass.
         may_have_registered = True
         code, registered = command("enable")
@@ -54,10 +69,10 @@ def validate(source: Path, diagnostics: Path) -> None:
         if code or repeated != "not_registered":
             raise RuntimeError(f"Idempotent disable failed: {repeated} (exit {code})")
         code, final = command("status")
-        if code or final != initial:
-            raise RuntimeError(f"Original unregistered state was not restored: {final} (exit {code})")
+        if code or final != "not_registered":
+            raise RuntimeError(f"Test login item remains registered: {final} (exit {code})")
         may_have_registered = False
-        print("Real SMAppService enable/disable roundtrip passed; original state restored.", flush=True)
+        print("Real SMAppService enable/disable roundtrip passed; no login item left enabled.", flush=True)
         print("No logout/login or human approval was simulated; pending approval remains pending.", flush=True)
     finally:
         if may_have_registered and host.exists():

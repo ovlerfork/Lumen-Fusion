@@ -9,7 +9,7 @@ Lumen Fusion is a macOS-focused descendant of [Lumen](https://github.com/trollze
 
 ## Install the native macOS app
 
-The native DMG is the primary installation path. Open the [Lumen Fusion releases page](https://github.com/ovlerfork/Lumen-Fusion/releases) and choose the DMG for the release you intend to install. It does not require Terminal, Homebrew, `sudo`, or a source build.
+Requires **Apple Silicon and macOS 15 or later**. The native DMG is the primary installation path. Open the [Lumen Fusion releases page](https://github.com/ovlerfork/Lumen-Fusion/releases) and choose the DMG for the release you intend to install. It does not require Terminal, Homebrew, `sudo`, or a source build.
 
 1. If upgrading, choose **Quit** from the old app's menu bar and wait for it to exit.
 2. Open the DMG and drag **Lumen Fusion.app** into **Applications**. In Finder, replace the previous copy when asked.
@@ -21,6 +21,8 @@ Lumen Fusion is a menu-bar app, so it may not show a Dock icon or main window. U
 Your settings, certificates, and existing Moonlight pairings stay in `~/.config/lumina/`. Replacing the application does not erase that directory. An older command-line installation may still exist; use the copy in **Applications** when checking an upgrade.
 
 ### First launch and permissions
+
+Preview builds are **ad-hoc signed, not Developer ID signed or Apple-notarized**. An update can require a new app-specific approval; no system-wide security changes are needed.
 
 If macOS blocks this app because it cannot verify the developer, first verify the download source. Then use this app's **Open Anyway** action in **System Settings → Privacy & Security** and open it again. Do not use broad quarantine-removal commands.
 
