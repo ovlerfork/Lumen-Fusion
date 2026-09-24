@@ -28,6 +28,11 @@ namespace system_tray {
    */
   void tray_restart_cb([[maybe_unused]] struct tray_menu *item);
 
+#if defined(__APPLE__) || defined(__MACH__)
+  /** Open the native macOS Launch at Login settings panel. */
+  void tray_login_item_settings_cb([[maybe_unused]] struct tray_menu *item);
+#endif
+
   /**
    * @brief Callback for exiting Sunshine from the system tray.
    * @param item The tray menu item.

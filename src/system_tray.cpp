@@ -43,6 +43,9 @@
   #include "confighttp.h"
   #include "display_device.h"
   #include "logging.h"
+  #if defined(__APPLE__) || defined(__MACH__)
+    #include "login_item.h"
+  #endif
   #include "platform/common.h"
   #include "process.h"
   #include "src/entry_handler.h"
@@ -97,6 +100,12 @@ namespace system_tray {
     std::ignore = display_device::reset_persistence();
   }
 
+  #if defined(__APPLE__) || defined(__MACH__)
+  void tray_login_item_settings_cb([[maybe_unused]] struct tray_menu *item) {
+    login_item::show_settings_panel();
+  }
+  #endif
+
   void tray_restart_cb([[maybe_unused]] struct tray_menu *item) {
     BOOST_LOG(info) << "Restarting from system tray"sv;
 
@@ -146,6 +155,10 @@ namespace system_tray {
         // todo - use boost/locale to translate menu strings
         {.text = "Open Lumina", .cb = tray_open_ui_cb},
         {.text = "-"},
+  #if defined(__APPLE__) || defined(__MACH__)
+        {.text = "Launch at Login…", .cb = tray_login_item_settings_cb},
+        {.text = "-"},
+  #endif
   // Currently display device settings are only supported on Windows
   #ifdef _WIN32
         {.text = "Reset Display Device Config", .cb = tray_reset_display_device_config_cb},

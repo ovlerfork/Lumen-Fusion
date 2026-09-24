@@ -36,6 +36,7 @@ list(APPEND SUNSHINE_EXTERNAL_LIBRARIES
         ${FOUNDATION_LIBRARY}
         ${VIDEO_TOOLBOX_LIBRARY}
         ${SCREEN_CAPTURE_KIT_LIBRARY}
+        ${SERVICE_MANAGEMENT_LIBRARY}
         ${AUDIO_TOOLBOX_LIBRARY}
         ${CORE_AUDIO_LIBRARY}
         ${IOKIT_LIBRARY})
@@ -63,6 +64,7 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/macos/input.mm"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/microphone.mm"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/misc.mm"
+        "${CMAKE_SOURCE_DIR}/src/platform/macos/login_item.mm"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/misc.h"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/nv12_zero_device.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/nv12_zero_device.h"

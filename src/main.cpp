@@ -22,12 +22,18 @@
 #include "upnp.h"
 #include "video.h"
 
+#if defined(__APPLE__) || defined(__MACH__)
+  #include "login_item.h"
+  #include "platform/macos/signal_dispatcher.h"
+#endif
+
 extern "C" {
 #include "rswrapper.h"
 }
 
 using namespace std::literals;
 
+#if !defined(__APPLE__) && !defined(__MACH__)
 std::map<int, std::function<void()>> signal_handlers;
 
 void on_signal_forwarder(int sig) {
@@ -40,6 +46,7 @@ void on_signal(int sig, FN &&fn) {
 
   std::signal(sig, on_signal_forwarder);
 }
+#endif
 
 std::map<std::string_view, std::function<int(const char *name, int argc, char **argv)>> cmd_to_func {
   {"creds"sv, [](const char *name, int argc, char **argv) {
@@ -51,6 +58,11 @@ std::map<std::string_view, std::function<int(const char *name, int argc, char **
   {"version"sv, [](const char *name, int argc, char **argv) {
      return args::version();
    }},
+#if defined(__APPLE__) || defined(__MACH__)
+  {"login-item"sv, [](const char *name, int argc, char **argv) {
+     return login_item::command(name, argc, argv);
+   }},
+#endif
 #ifdef _WIN32
   {"restore-nvprefs-undo"sv, [](const char *name, int argc, char **argv) {
      return args::restore_nvprefs_undo();
@@ -272,6 +284,39 @@ static int run_main(int argc, char *argv[]) {
 
   // Create signal handler after logging has been initialized
   auto shutdown_event = mail::man->event<bool>(mail::shutdown);
+#if defined(__APPLE__) || defined(__MACH__)
+  bool shutdown_started = false;
+  auto request_shutdown = [&force_shutdown, shutdown_event, &shutdown_started](std::string_view message) {
+    if (shutdown_started) {
+      return;
+    }
+    shutdown_started = true;
+
+    BOOST_LOG(info) << message;
+
+    auto task = []() {
+      BOOST_LOG(fatal) << "10 seconds passed, yet Sunshine's still running: Forcing shutdown"sv;
+      logging::log_flush();
+      lifetime::debug_trap();
+    };
+    force_shutdown = task_pool.pushDelayed(task, 10s).task_id;
+
+    // Break out of the main loop
+    shutdown_event->raise(true);
+    system_tray::end_tray();
+  };
+  macos_signal::dispatcher signal_dispatcher;
+
+  if (!signal_dispatcher.register_handler(SIGINT, [&request_shutdown]() {
+        request_shutdown("Interrupt handler called"sv);
+      }) ||
+      !signal_dispatcher.register_handler(SIGTERM, [&request_shutdown]() {
+        request_shutdown("Terminate handler called"sv);
+      })) {
+    BOOST_LOG(error) << "Failed to register macOS signal handlers"sv;
+    return -1;
+  }
+#else
   on_signal(SIGINT, [&force_shutdown, &display_device_deinit_guard, shutdown_event]() {
     BOOST_LOG(info) << "Interrupt handler called"sv;
 
@@ -305,6 +350,7 @@ static int run_main(int argc, char *argv[]) {
 
     display_device_deinit_guard = nullptr;
   });
+#endif
 
 #ifdef _WIN32
   // Terminate gracefully on Windows when console window is closed
@@ -389,12 +435,26 @@ static int run_main(int argc, char *argv[]) {
 #endif
   }
 
+#if defined(__APPLE__) || defined(__MACH__)
+  // A signal can arrive while tray_init() is still creating the Qt objects. In
+  // that case end_tray() observes an uninitialized tray, so retry once setup
+  // has completed before entering the blocking Qt event loop.
+  if (shutdown_event->peek()) {
+    system_tray::end_tray();
+  }
+#endif
+
   mainThreadLoop(shutdown_event);
 
   httpThread.join();
   configThread.join();
   rtspThread.join();
 
+#if defined(__APPLE__) || defined(__MACH__)
+  // Join callbacks before stopping the pool and before captured locals unwind.
+  signal_dispatcher.stop();
+  display_device_deinit_guard = nullptr;
+#endif
   task_pool.stop();
   task_pool.join();
 
