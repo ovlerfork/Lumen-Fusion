@@ -46,6 +46,10 @@
 }
 
 - (id)initWithDisplay:(CGDirectDisplayID)displayID frameRate:(int)frameRate {
+  return [self initWithDisplay:displayID minimumFrameDuration:CMTimeMake(1, frameRate)];
+}
+
+- (id)initWithDisplay:(CGDirectDisplayID)displayID minimumFrameDuration:(CMTime)minimumFrameDuration {
   self = [super init];
 
   CGDisplayModeRef mode = CGDisplayCopyDisplayMode(displayID);
@@ -61,7 +65,7 @@
     self.frameWidth = (int) CGDisplayPixelsWide(displayID);
     self.frameHeight = (int) CGDisplayPixelsHigh(displayID);
   }
-  self.minFrameDuration = CMTimeMake(1, frameRate);
+  self.minFrameDuration = minimumFrameDuration;
   self.session = [[AVCaptureSession alloc] init];
   self.videoOutputs = [[NSMapTable alloc] init];
   self.captureCallbacks = [[NSMapTable alloc] init];

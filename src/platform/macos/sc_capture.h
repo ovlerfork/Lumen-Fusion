@@ -15,7 +15,7 @@ API_AVAILABLE(macos(12.3))
 #define kMaxDisplays 32
 
 @property (nonatomic, assign) CGDirectDisplayID displayID;
-@property (nonatomic, assign) int frameRate;
+@property (nonatomic, assign) CMTime minimumFrameInterval;
 @property (nonatomic, assign) OSType pixelFormat;
 @property (nonatomic, assign) int frameWidth;
 @property (nonatomic, assign) int frameHeight;
@@ -43,6 +43,9 @@ typedef void (^AudioSampleCallbackBlock)(CMSampleBufferRef);
 
 - (instancetype)initWithDisplay:(CGDirectDisplayID)displayID
                       frameRate:(int)frameRate
+                   captureAudio:(BOOL)captureAudio;
+- (instancetype)initWithDisplay:(CGDirectDisplayID)displayID
+        minimumFrameInterval:(CMTime)minimumFrameInterval
                    captureAudio:(BOOL)captureAudio;
 
 - (void)setFrameWidth:(int)frameWidth frameHeight:(int)frameHeight;

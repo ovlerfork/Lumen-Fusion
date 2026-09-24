@@ -47,12 +47,20 @@ API_AVAILABLE(macos(12.3))
 - (instancetype)initWithDisplay:(CGDirectDisplayID)displayID
                       frameRate:(int)frameRate
                    captureAudio:(BOOL)captureAudio {
+    return [self initWithDisplay:displayID
+            minimumFrameInterval:CMTimeMake(1, frameRate)
+                   captureAudio:captureAudio];
+}
+
+- (instancetype)initWithDisplay:(CGDirectDisplayID)displayID
+        minimumFrameInterval:(CMTime)minimumFrameInterval
+                   captureAudio:(BOOL)captureAudio {
     self = [super init];
     if (self) {
         CGDisplayModeRef mode = CGDisplayCopyDisplayMode(displayID);
 
         self.displayID = displayID;
-        self.frameRate = frameRate;
+        self.minimumFrameInterval = minimumFrameInterval;
         self.pixelFormat = kCVPixelFormatType_32BGRA;
         self.captureAudio = captureAudio;
 
@@ -181,7 +189,7 @@ API_AVAILABLE(macos(12.3))
         SCStreamConfiguration *config = [[SCStreamConfiguration alloc] init];
         config.width = self.frameWidth;
         config.height = self.frameHeight;
-        config.minimumFrameInterval = CMTimeMake(1, self.frameRate);
+        config.minimumFrameInterval = self.minimumFrameInterval;
         config.pixelFormat = self.pixelFormat;
         config.queueDepth = 4;
         config.showsCursor = YES;

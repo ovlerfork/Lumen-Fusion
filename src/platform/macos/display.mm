@@ -23,6 +23,7 @@
 #define AVMediaType AVMediaType_FFmpeg
 #include "src/video.h"
 #undef AVMediaType
+#include "src/platform/macos/capture_frame_interval.h"
 
 namespace fs = std::filesystem;
 
@@ -400,6 +401,9 @@ namespace platf {
     }
     BOOST_LOG(info) << "Configuring selected display ("sv << selected_display_id << ") to stream"sv;
 
+    const auto frame_interval = macos::capture_frame_interval(config.framerate, config.framerateX100);
+    const auto minimum_frame_interval = CMTimeMake(frame_interval.value, frame_interval.timescale);
+
     // ScreenCaptureKit capture backend — handles virtual display reconnection
     // reliably. AVFoundation's AVCaptureScreenInput stops delivering frames
     // when a virtual display is destroyed and recreated between sessions.
@@ -407,7 +411,7 @@ namespace platf {
       if ([SCCapture isAvailable]) {
         auto disp = std::make_shared<sc_display_t>();
         disp->display_id = selected_display_id;
-        disp->sc_capture = [[SCCapture alloc] initWithDisplay:selected_display_id frameRate:config.framerate captureAudio:NO];
+        disp->sc_capture = [[SCCapture alloc] initWithDisplay:selected_display_id minimumFrameInterval:minimum_frame_interval captureAudio:NO];
 
         if (!disp->sc_capture) {
           BOOST_LOG(error) << "SCCapture setup failed, trying AVFoundation..."sv;
@@ -424,7 +428,7 @@ namespace platf {
     // Fallback: AVFoundation capture backend
     auto disp = std::make_shared<av_display_t>();
     disp->display_id = selected_display_id;
-    disp->av_capture = [[AVVideo alloc] initWithDisplay:selected_display_id frameRate:config.framerate];
+    disp->av_capture = [[AVVideo alloc] initWithDisplay:selected_display_id minimumFrameDuration:minimum_frame_interval];
 
     if (!disp->av_capture) {
       BOOST_LOG(error) << "Video setup failed."sv;
