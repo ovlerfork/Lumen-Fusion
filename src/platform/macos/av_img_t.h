@@ -35,20 +35,31 @@ namespace platf {
           CMSampleBufferGetImageBuffer(sb)
         ) {
       if (buf) {
-        CVPixelBufferLockBaseAddress(buf, kCVPixelBufferLock_ReadOnly);
+        // These capture formats go directly to VideoToolbox as CVPixelBufferRefs.
+        // CPU locking is only needed for BGRA/software access (including dummy images).
+        const auto format = CVPixelBufferGetPixelFormatType(buf);
+        if (format != kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange &&
+            format != kCVPixelFormatType_420YpCbCr8BiPlanarFullRange &&
+            format != kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange &&
+            format != kCVPixelFormatType_420YpCbCr10BiPlanarFullRange) {
+          locked = CVPixelBufferLockBaseAddress(buf, kCVPixelBufferLock_ReadOnly) == kCVReturnSuccess;
+        }
       }
     }
 
     [[nodiscard]] uint8_t *data() const {
-      return buf ? static_cast<uint8_t *>(CVPixelBufferGetBaseAddress(buf)) : nullptr;
+      return locked ? static_cast<uint8_t *>(CVPixelBufferGetBaseAddress(buf)) : nullptr;
     }
 
     // Destructor
     ~av_pixel_buf_t() {
-      if (buf != nullptr) {
+      if (locked) {
         CVPixelBufferUnlockBaseAddress(buf, kCVPixelBufferLock_ReadOnly);
       }
     }
+
+  private:
+    bool locked = false;
   };
 
   struct av_img_t: img_t {

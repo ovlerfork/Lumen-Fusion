@@ -80,6 +80,15 @@ jobs:
           attached=false
           trap - EXIT
           bash scripts/validate-macos-package.sh "$installation/Lumen Fusion.app" "$DIAGNOSTICS/dmg"
+      - name: Upload native test measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lumen-fusion-native-test-measurements
+          path: |
+            ${{ env.DIAGNOSTICS }}/gtest.log
+            ${{ env.DIAGNOSTICS }}/gtest.xml
+          if-no-files-found: warn
       - name: Upload failure diagnostics
         if: failure()
         uses: actions/upload-artifact@v4

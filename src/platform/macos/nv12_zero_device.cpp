@@ -33,15 +33,21 @@ namespace platf {
       return -1;  // No valid pixel buffer — caller should skip this frame
     }
 
-    // Release any existing CVPixelBuffer previously retained for encoding
-    av_buffer_unref(&av_frame->buf[0]);
-
     // Attach an AVBufferRef to this frame which will retain ownership of the CVPixelBuffer
-    // until av_buffer_unref() is called (above) or the frame is freed with av_frame_free().
+    // until it is replaced or the frame is freed with av_frame_free().
     //
     // The presence of the AVBufferRef allows FFmpeg to simply add a reference to the buffer
     // rather than having to perform a deep copy of the data buffers in avcodec_send_frame().
-    av_frame->buf[0] = av_buffer_create((uint8_t *) CFRetain(av_img->pixel_buffer->buf), 0, free_buffer, nullptr, 0);
+    auto pixel_buffer = CVPixelBufferRetain(av_img->pixel_buffer->buf);
+    auto buffer = av_buffer_create((uint8_t *) pixel_buffer, 0, free_buffer, nullptr, 0);
+    if (!buffer) {
+      CVPixelBufferRelease(pixel_buffer);
+      return -1;
+    }
+
+    // Replace the previous buffer only after ownership of the new one is secured.
+    av_buffer_unref(&av_frame->buf[0]);
+    av_frame->buf[0] = buffer;
 
     // Place a CVPixelBufferRef at data[3] as required by AV_PIX_FMT_VIDEOTOOLBOX
     av_frame->data[3] = (uint8_t *) av_img->pixel_buffer->buf;

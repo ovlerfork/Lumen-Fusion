@@ -7,6 +7,7 @@
 #include <bitset>
 #include <list>
 #include <map>
+#include <mutex>
 #include <thread>
 
 #ifdef __APPLE__
@@ -1420,6 +1421,8 @@ namespace video {
 
     constexpr auto capture_buffer_size = 12;
     std::list<std::shared_ptr<platf::img_t>> imgs(capture_buffer_size);
+    // Native callbacks and a backend's shutdown poll may both request a free image.
+    std::mutex imgs_mutex;
 
     std::vector<std::optional<std::chrono::steady_clock::time_point>> imgs_used_timestamps;
     const std::chrono::seconds trim_timeot = 3s;
@@ -1474,6 +1477,7 @@ namespace video {
     auto pull_free_image_callback = [&](std::shared_ptr<platf::img_t> &img_out) -> bool {
       img_out.reset();
       while (capture_ctx_queue->running()) {
+        std::unique_lock images_lock(imgs_mutex);
         // pick first allocated but unused
         for (auto it = imgs.begin(); it != imgs.end(); it++) {
           if (*it && it->use_count() == 1) {
@@ -1509,6 +1513,7 @@ namespace video {
           return true;
         } else {
           // sleep and retry if image pool is full
+          images_lock.unlock();
           std::this_thread::sleep_for(1ms);
         }
       }
@@ -1567,8 +1572,11 @@ namespace video {
             reinit_event.raise(true);
 
             // Some classes of images contain references to the display --> display won't delete unless img is deleted
-            for (auto &img : imgs) {
-              img.reset();
+            {
+              std::lock_guard images_lock(imgs_mutex);
+              for (auto &img : imgs) {
+                img.reset();
+              }
             }
 
             // display_wp is modified in this thread only

@@ -52,6 +52,7 @@ function run_step_cmake() {
     "-DBUILD_DOCS=${build_docs}"
     "-DBUILD_TESTS=${build_tests}"
     "-DBUILD_WERROR=ON"
+    "-DLUMINA_ENABLE_STREAM_PERF_LOGGING=ON"
     "-DCMAKE_BUILD_TYPE=${build_type}"
     "-DCMAKE_OSX_ARCHITECTURES=arm64"
     "-DCMAKE_OSX_DEPLOYMENT_TARGET=14.0"

@@ -34,10 +34,14 @@ extern "C" {
 #include "platform/common.h"
 #include "process.h"
 #include "stream.h"
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+  #include "stream_perf.h"
+#endif
 #include "sync.h"
 #include "system_tray.h"
 #include "thread_safe.h"
 #include "utility.h"
+#include "video_rtp_clock.h"
 
 #define IDX_START_A 0
 #define IDX_START_B 1
@@ -345,6 +349,10 @@ namespace stream {
     control_server_t control_server;
   };
 
+#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
+  struct perf_window_t;
+#endif
+
   struct session_t {
     config_t config;
 
@@ -369,6 +377,7 @@ namespace stream {
 
       std::optional<crypto::cipher::gcm_t> cipher;
       std::uint64_t gcm_iv_counter;
+      video::rtp_clock_t rtp_clock;
 
       safe::mail_raw_t::event_t<bool> idr_events;
       safe::mail_raw_t::event_t<std::pair<int64_t, int64_t>> invalidate_ref_frames_events;
@@ -376,6 +385,7 @@ namespace stream {
 #ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
       // LUMINA_STREAM_PERF_DIAGNOSTICS_BEGIN
       std::atomic<std::uint64_t> perf_idr_requests {0};
+      std::unique_ptr<perf_window_t> perf_window;
       // LUMINA_STREAM_PERF_DIAGNOSTICS_END
 #endif
 
@@ -426,42 +436,6 @@ namespace stream {
 
 #ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
   // LUMINA_STREAM_PERF_DIAGNOSTICS_BEGIN
-  // Temporary, bounded profiler state. There are at most ~300 frame samples in
-  // a five-second 60 FPS window, so this never allocates in the streaming path.
-  struct perf_samples_t {
-    static constexpr std::size_t capacity = 512;
-
-    void add(double value) {
-      sum += value;
-      maximum = std::max(maximum, value);
-      ++total_count;
-      if (sample_count < samples.size()) {
-        samples[sample_count++] = value;
-      }
-    }
-
-    double average() const {
-      return total_count ? sum / static_cast<double>(total_count) : 0.0;
-    }
-
-    double percentile(double fraction) const {
-      if (!sample_count) {
-        return 0.0;
-      }
-
-      auto sorted = samples;
-      const auto index = static_cast<std::size_t>((sample_count - 1) * fraction);
-      std::nth_element(sorted.begin(), sorted.begin() + index, sorted.begin() + sample_count);
-      return sorted[index];
-    }
-
-    std::array<double, capacity> samples {};
-    std::size_t sample_count {0};
-    std::uint64_t total_count {0};
-    double sum {0.0};
-    double maximum {0.0};
-  };
-
   struct perf_window_t {
     perf_window_t():
         started {std::chrono::steady_clock::now()},
@@ -480,6 +454,7 @@ namespace stream {
       out << ' ' << name << "_ms_avg=" << samples.average()
           << ' ' << name << "_ms_p50=" << samples.percentile(0.50)
           << ' ' << name << "_ms_p95=" << samples.percentile(0.95)
+          << ' ' << name << "_ms_p99=" << samples.percentile(0.99)
           << ' ' << name << "_ms_max=" << samples.maximum;
     }
 
@@ -497,7 +472,7 @@ namespace stream {
 
       std::ostringstream out;
       out << std::fixed << std::setprecision(2)
-          << "PERF_VIDEO"
+          << "PERF_VIDEO percentile_method=reservoir512"
           << " session=" << session->launch_session_id
           << " peer=" << session->video.peer.address().to_string()
           << " width=" << monitor.width
@@ -517,8 +492,14 @@ namespace stream {
           << " payload_mbps=" << (payload_bytes * 8.0 / elapsed_seconds / 1'000'000.0)
           << " wire_mbps=" << (wire_bytes * 8.0 / elapsed_seconds / 1'000'000.0)
           << " data_shards=" << data_shards
-          << " parity_shards=" << parity_shards;
+          << " parity_shards=" << parity_shards
+          << " encode_over_budget=" << encode_over_budget;
 
+      // These gaps describe frames that reached the sender, not lost network
+      // packets or the client's distinct pacing-drop statistic.
+      append_samples(out, "used_capture_gap", used_capture_gap_ms);
+      append_samples(out, "encode_output_gap", encode_output_gap_ms);
+      append_samples(out, "send_complete_gap", send_complete_gap_ms);
       append_samples(out, "capture_queue", capture_queue_ms);
       append_samples(out, "convert", convert_ms);
       append_samples(out, "encode", encode_ms);
@@ -530,9 +511,26 @@ namespace stream {
       append_samples(out, "capture_to_send", capture_to_send_ms);
 
       BOOST_LOG(performance) << out.str();
+      const auto capture_previous = last_used_capture;
+      const auto encode_previous = last_encode_output;
+      const auto send_previous = last_send_complete;
       *this = perf_window_t {};
+      last_used_capture = capture_previous;
+      last_encode_output = encode_previous;
+      last_send_complete = send_previous;
     }
 
+    static void record_gap(perf_samples_t &samples, std::chrono::steady_clock::time_point &previous,
+                           const std::chrono::steady_clock::time_point current) {
+      if (valid(previous) && current >= previous) {
+        samples.add(milliseconds(current - previous));
+      }
+      previous = current;
+    }
+
+    std::chrono::steady_clock::time_point last_used_capture {};
+    std::chrono::steady_clock::time_point last_encode_output {};
+    std::chrono::steady_clock::time_point last_send_complete {};
     std::chrono::steady_clock::time_point started;
     std::clock_t cpu_started;
     std::uint64_t output_frames {0};
@@ -543,6 +541,10 @@ namespace stream {
     std::uint64_t wire_bytes {0};
     std::uint64_t data_shards {0};
     std::uint64_t parity_shards {0};
+    std::uint64_t encode_over_budget {0};
+    perf_samples_t used_capture_gap_ms;
+    perf_samples_t encode_output_gap_ms;
+    perf_samples_t send_complete_gap_ms;
     perf_samples_t capture_queue_ms;
     perf_samples_t convert_ms;
     perf_samples_t encode_ms;
@@ -1475,12 +1477,6 @@ namespace stream {
 
     auto ratecontrol_next_frame_start = std::chrono::steady_clock::now();
 
-#ifdef LUMINA_ENABLE_STREAM_PERF_LOGGING
-    // LUMINA_STREAM_PERF_DIAGNOSTICS_BEGIN
-    std::unordered_map<std::uint32_t, perf_window_t> perf_windows;
-    // LUMINA_STREAM_PERF_DIAGNOSTICS_END
-#endif
-
     while (auto packet = packets->pop()) {
       if (shutdown_event->peek()) {
         break;
@@ -1505,11 +1501,16 @@ namespace stream {
 
       if (config::sunshine.streaming_performance_logging) {
         perf_frame_start = std::chrono::steady_clock::now();
-        perf_window = &perf_windows[session->launch_session_id];
+        if (!session->video.perf_window) {
+          session->video.perf_window = std::make_unique<perf_window_t>();
+        }
+        perf_window = session->video.perf_window.get();
         const auto &timing = packet->perf_timing;
         if (timing.active && perf_window_t::valid(timing.encode_ready)) {
           perf_window->broadcast_queue_ms.add(perf_window_t::milliseconds(perf_frame_start - timing.encode_ready));
         }
+      } else {
+        session->video.perf_window.reset();
       }
       // LUMINA_STREAM_PERF_DIAGNOSTICS_END
 #endif
@@ -1632,6 +1633,12 @@ namespace stream {
         // Don't ignore the last ratecontrol group of the previous frame
         auto ratecontrol_frame_start = std::max(ratecontrol_next_frame_start, std::chrono::steady_clock::now());
 
+        // One presentation timestamp for every FEC block of this frame. Idle
+        // repeats use this frame's start, not a stale deadline from the last frame.
+        // Keep frame_timestamp empty for repeats so latency statistics stay honest.
+        const bool frame_is_dupe = !packet->frame_timestamp;
+        const auto timestamp = session->video.rtp_clock.next(packet->frame_timestamp, ratecontrol_frame_start, video_epoch);
+
         size_t ratecontrol_frame_packets_sent = 0;
         size_t ratecontrol_group_packets_sent = 0;
 
@@ -1689,16 +1696,6 @@ namespace stream {
           };
 
           size_t next_shard_to_send = 0;
-
-          // RTP video timestamps use a 90 KHz clock and the frame_timestamp from when the frame was captured
-          // When a timestamp isn't available (duplicate frames), the timestamp from rate control is used instead.
-          bool frame_is_dupe = false;
-          if (!packet->frame_timestamp) {
-            packet->frame_timestamp = ratecontrol_next_frame_start;
-            frame_is_dupe = true;
-          }
-          using rtp_tick = std::chrono::duration<uint32_t, std::ratio<1, 90000>>;
-          uint32_t timestamp = std::chrono::round<rtp_tick>(*packet->frame_timestamp - video_epoch).count();
 
           // set FEC info now that we know for sure what our percentage will be for this frame
           for (auto x = 0; x < shards.size(); ++x) {
@@ -1836,10 +1833,12 @@ namespace stream {
           perf_window->pacing_ms.add(perf_frame_pacing_ms);
           perf_window->send_ms.add(perf_frame_send_ms);
           perf_window->network_ms.add(perf_window_t::milliseconds(frame_done - perf_frame_start));
+          perf_window_t::record_gap(perf_window->send_complete_gap_ms, perf_window->last_send_complete, frame_done);
 
           if (timing.active) {
             if (timing.capture && !timing.capture_repeated) {
               ++perf_window->source_frames;
+              perf_window_t::record_gap(perf_window->used_capture_gap_ms, perf_window->last_used_capture, *timing.capture);
               perf_window->capture_to_send_ms.add(perf_window_t::milliseconds(frame_done - *timing.capture));
             } else {
               ++perf_window->duplicate_frames;
@@ -1852,7 +1851,12 @@ namespace stream {
               perf_window->convert_ms.add(perf_window_t::milliseconds(timing.convert_ready - timing.convert_start));
             }
             if (perf_window_t::valid(timing.encode_submit) && perf_window_t::valid(timing.encode_ready)) {
-              perf_window->encode_ms.add(perf_window_t::milliseconds(timing.encode_ready - timing.encode_submit));
+              const double encode_duration = perf_window_t::milliseconds(timing.encode_ready - timing.encode_submit);
+              perf_window->encode_ms.add(encode_duration);
+              perf_window_t::record_gap(perf_window->encode_output_gap_ms, perf_window->last_encode_output, timing.encode_ready);
+              if (session->config.monitor.framerate > 0 && encode_duration > 1000.0 / session->config.monitor.framerate) {
+                ++perf_window->encode_over_budget;
+              }
             }
           } else if (perf_frame_had_capture_timestamp) {
             ++perf_window->source_frames;
