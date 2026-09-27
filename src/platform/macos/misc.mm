@@ -342,6 +342,11 @@ namespace platf {
   }
 
   void streaming_will_prepare() {
+    // Adaptive preparation has already created or reused a valid virtual target.
+    // Do not wake local screens and change the role selected from their state.
+    if (adaptive_display::enabled()) {
+      return;
+    }
     std::lock_guard lock {streaming_power_assertion_mutex};
     if (declare_remote_user_activity()) {
       wait_for_display_after_wake(config::video.output_name);
