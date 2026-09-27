@@ -200,7 +200,7 @@ static void rememberDisplays(const DisplayLists *lists) {
   }
 }
 
-// A local mirroring our VD is online but inactive. It can become the master
+// A local mirroring our VD is online but may be inactive. It can become the master
 // once detached; excluding it would mistake reverse mirroring for headlessness.
 static BOOL localMainCandidate(const DisplayLists *lists, CGDirectDisplayID virtualID, CGDirectDisplayID id) {
   return id && id != virtualID && listedDisplay(lists->online, lists->onlineCount, id) &&
@@ -229,7 +229,6 @@ static BOOL waitForMirror(CGDirectDisplayID virtualID, CGDirectDisplayID master)
     if (readDisplayLists(&lists) &&
         listedDisplay(lists.online, lists.onlineCount, virtualID) &&
         listedDisplay(lists.active, lists.activeCount, master) &&
-        !listedDisplay(lists.active, lists.activeCount, virtualID) &&
         CGDisplayMirrorsDisplay(virtualID) == master && !CGDisplayMirrorsDisplay(master)) return YES;
     if (CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.05, false) == kCFRunLoopRunFinished)
       usleep(50000);
@@ -676,7 +675,7 @@ static int runHelper(int argc, const char *argv[]) {
     usleep(500000); // 500ms
 
     // Step 4: If still not visible, try again after a longer wait.
-    // A mirror slave is legitimately absent from the active list, so only retry
+    // A hardware mirror slave may be absent from the active list, so only retry
     // (which un-mirrors) when we actually asked for extend mode.
     uint32_t count = 0;
     BOOL found = checkDisplayInList(resultID, &count);

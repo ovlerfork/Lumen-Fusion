@@ -44,6 +44,8 @@ static CGDirectDisplayID unavailableID;
 static BOOL offlineObservation, inactiveObservation;
 static BOOL failNextOnlineObservation;
 static CGDirectDisplayID lastReplyID, staleMaster;
+static CGDirectDisplayID activeMirrorSlave;
+static BOOL includeMirrorSlave;
 static BOOL splitNextReply, delayedReply, malformedNextReply;
 static int replyTimeouts, commandWrites, unlistedCreationObservations;
 static unsigned long replyValue;
@@ -88,6 +90,12 @@ CGError native_test_online_list(uint32_t capacity, CGDirectDisplayID *ids, uint3
 CGError native_test_active_list(uint32_t capacity, CGDirectDisplayID *ids, uint32_t *count) {
   CGError err = CGGetActiveDisplayList(capacity, ids, count);
   if (err == kCGErrorSuccess && (offlineObservation || inactiveObservation)) omitDisplay(ids, count, unavailableID);
+  // Vary only the wrapper's observation of a real, already-established mirror
+  // set. This does not change WindowServer's mirroring implementation.
+  if (err == kCGErrorSuccess && activeMirrorSlave && *count < capacity) {
+    omitDisplay(ids, count, activeMirrorSlave);
+    if (includeMirrorSlave) ids[(*count)++] = activeMirrorSlave;
+  }
   return err;
 }
 CGDirectDisplayID native_test_mirror(CGDirectDisplayID id) {
@@ -207,7 +215,7 @@ static void require(BOOL condition, const char *message) {
     interruptedWait = 0;
     failNextOnlineObservation = NO;
     replyTimeouts = 0;
-    staleMaster = 0;
+    staleMaster = activeMirrorSlave = 0;
     offlineObservation = inactiveObservation = NO;
     cleanupCrash();
     virtual_display_destroy();
@@ -313,19 +321,18 @@ static BOOL waitForMirror(CGDirectDisplayID slave, CGDirectDisplayID master, CGD
     onlineErr = CGGetOnlineDisplayList(64, online, &onlineCount);
     activeErr = CGGetActiveDisplayList(64, active, &activeCount);
     if (onlineErr == kCGErrorSuccess && activeErr == kCGErrorSuccess && onlineCount < 64 && activeCount < 64) {
-      BOOL slaveOnline = NO, masterOnline = NO, slaveActive = NO, masterActive = NO, complete = YES;
+      BOOL slaveOnline = NO, masterOnline = NO, masterActive = NO, complete = YES;
       for (uint32_t i = 0; i < onlineCount; ++i) {
         slaveOnline |= online[i] == slave;
         masterOnline |= online[i] == master;
       }
       for (uint32_t i = 0; i < activeCount; ++i) {
-        slaveActive |= active[i] == slave;
         masterActive |= active[i] == master;
         BOOL found = NO;
         for (uint32_t j = 0; j < onlineCount; ++j) found |= active[i] == online[j];
         complete &= found;
       }
-      if (complete && slaveOnline && masterOnline && !slaveActive && masterActive &&
+      if (complete && slaveOnline && masterOnline && masterActive &&
           CGDisplayMirrorsDisplay(slave) == master && !CGDisplayMirrorsDisplay(master) &&
           virtual_display_get_target_id() == (slave == owned ? master : owned)) return YES;
     }
@@ -691,9 +698,19 @@ int main(int argc, char **argv) {
     if (reverseErr == kCGErrorSuccess) reverseErr = CGCompleteDisplayConfiguration(reverseConfig, kCGConfigureForAppOnly);
     else CGCancelDisplayConfiguration(reverseConfig);
     require(reverseErr == kCGErrorSuccess && waitForMirror(mirrorLocal, changed, changed),
-            "local fixture is online inactive slave of VD");
-    require(virtual_display_apply_layout("mirror", mirrorLocal), "reverse mirror promotes preferred inactive local");
+            "local fixture is online mirror slave of VD");
+    require(virtual_display_apply_layout("mirror", mirrorLocal), "reverse mirror promotes preferred mirrored local");
     require(waitForMirror(changed, mirrorLocal, changed), "VD becomes slave of promoted local with usable capture target");
+    // Exercise both valid active-list forms at the wrapper boundary, with the
+    // native online membership and slave->master relationship unchanged.
+    activeMirrorSlave = changed;
+    for (int included = 0; included < 2; ++included) {
+      includeMirrorSlave = included;
+      require(virtual_display_get_target_id() == mirrorLocal,
+              included ? "mirror target ready with slave in active observation" :
+                         "mirror target ready without slave in active observation");
+    }
+    activeMirrorSlave = 0;
     require(virtual_display_get_id() == changed && observedHelper == mirrorHelper,
             "reverse mirror retains same helper and VD");
     require(virtual_display_apply_layout("extend", originalMain) && waitForMain(originalMain),

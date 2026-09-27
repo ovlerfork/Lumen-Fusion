@@ -64,8 +64,9 @@ uint32_t virtual_display_get_id(void);
  * @brief Get the display ID that capture and input should target.
  *
  * Normally this is the virtual display itself. When the virtual display is a
- * mirror slave it is not in the active display list and cannot be captured, so
- * the mirror master (the display showing the same content) is returned instead.
+ * mirror slave, the mirror master (the display showing the same content) is
+ * returned instead. Software mirroring may list both members as active;
+ * hardware mirroring lists only the master as active.
  *
  * @return A capturable CGDirectDisplayID, or 0 if no virtual display is active.
  */

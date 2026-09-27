@@ -153,9 +153,9 @@ static uint32_t visibleLocked(void) {
   CGDirectDisplayID master = CGDisplayMirrorsDisplay(vd_display_id);
   CGDirectDisplayID target = master ? master : vd_display_id;
   if (!listedDisplay(active, activeCount, target)) return 0;
-  // A mirror slave cannot simultaneously be an active independent display.
-  // Reject a scalar mirror observation that disagrees with the fresh list.
-  if (master && (listedDisplay(active, activeCount, vd_display_id) || CGDisplayMirrorsDisplay(master))) return 0;
+  // Software mirroring may list both members as active. The target must still
+  // be the master, rather than a slave of another display.
+  if (master && CGDisplayMirrorsDisplay(master)) return 0;
   return target;
 }
 
