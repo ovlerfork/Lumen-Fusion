@@ -20,7 +20,7 @@ function page(retention) {
     requests,
     state: {
       ...methods,
-      config: { virtual_display_retention_seconds: retention, virtual_display_layout: 'adaptive' },
+      config: { virtual_display: 'enabled', virtual_display_retention_seconds: retention, virtual_display_layout: 'adaptive' },
       tabs: [{ options: { virtual_display_retention_seconds: 600 } }],
       saved: true,
       restarted: false,
@@ -64,4 +64,42 @@ test('Apply does not save or restart invalid edits; correction clears the error'
   assert.equal(await state.save(), true);
   assert.equal(requests.length, 1);
   assert.equal(state.retentionError, '');
+});
+
+
+test('Hidden invalid durations do not block Save or Apply after switching away or disabling', async () => {
+  for (const mode of [{ virtual_display_layout: 'extend' }, { virtual_display: 'disabled' }]) {
+    const { state, requests } = page('');
+    assert.equal(await state.save(), false);
+    Object.assign(state.config, mode, { sunshine_name: 'Edited host' });
+    assert.equal(await state.save(), true);
+    assert.equal(requests.length, 1);
+    assert.equal(state.retentionError, '');
+    state.apply();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(requests.map(request => request.url), ['./api/config', './api/config', './api/restart']);
+    for (const request of requests.slice(0, 2)) {
+      const body = JSON.parse(request.body);
+      assert.equal(Object.hasOwn(body, 'virtual_display_retention_seconds'), false);
+      assert.equal(body.sunshine_name, 'Edited host');
+      for (const [key, value] of Object.entries(mode)) assert.equal(body[key], value);
+    }
+    assert.equal(state.config.virtual_display_retention_seconds, '');
+    assert.equal(state.restarted, true);
+  }
+});
+
+test('Inactive legacy configurations omit malformed durations and preserve valid values', async () => {
+  for (const value of [undefined, NaN, null, 'invalid', -1, 1.5, 2147483648, 0, 600, '120']) {
+    const { state, requests } = page(value);
+    state.config.virtual_display_layout = 'extend';
+    assert.equal(await state.save(), true);
+    const body = JSON.parse(requests[0].body);
+    if (value === 0 || value === '120') {
+      assert.equal(body.virtual_display_retention_seconds, Number(value));
+    } else {
+      assert.equal(Object.hasOwn(body, 'virtual_display_retention_seconds'), false);
+    }
+    assert.equal(state.config.virtual_display_retention_seconds, value);
+  }
 });

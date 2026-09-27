@@ -499,15 +499,21 @@
         this.retentionError = "";
         const retention = this.config.virtual_display_retention_seconds;
         const seconds = Number(retention);
-        if ((typeof retention !== "number" && (typeof retention !== "string" || !/^-?\d+$/.test(retention))) ||
-            !Number.isInteger(seconds) || seconds < 0 || seconds > 2147483647) {
+        const validRetention = (typeof retention === "number" || (typeof retention === "string" && /^-?\d+$/.test(retention))) &&
+          Number.isInteger(seconds) && seconds >= 0 && seconds <= 2147483647;
+        const adaptiveEnabled = this.config.virtual_display === "enabled" && this.config.virtual_display_layout === "adaptive";
+        if (adaptiveEnabled && !validRetention) {
           this.retentionError = "config.virtual_display_retention_seconds_error";
           return Promise.resolve(false);
         }
 
         // create a temp copy of this.config to use for the post request
         let config = this.serialize();
-        config.virtual_display_retention_seconds = seconds;
+        if (validRetention) {
+          config.virtual_display_retention_seconds = seconds;
+        } else {
+          delete config.virtual_display_retention_seconds;
+        }
 
         // delete default values from this.config
         this.tabs.forEach(tab => {
