@@ -40,6 +40,8 @@ boolean_t native_test_display_online(CGDirectDisplayID id) {
   if (failNextOnlineObservation) {
     failNextOnlineObservation = NO;
     unavailableID = id;
+    fprintf(stderr, "[native_display_lifecycle] inject offline after acknowledgement display=%u helper=%d\n",
+            id, observedHelper);
     return false;
   }
   return id == unavailableID && offlineObservation ? false : CGDisplayIsOnline(id);
@@ -141,10 +143,20 @@ static void require(BOOL condition, const char *message) {
 }
 
 static BOOL waitForMain(CGDirectDisplayID id) {
-  fprintf(stderr, "[native_display_lifecycle] wait main requested=%u observed=%u\n", id, CGMainDisplayID());
+  CGDirectDisplayID displays[64];
+  uint32_t count = 0;
+  CGError err = kCGErrorSuccess;
   for (int i = 0; i < 100; ++i) {
-    if (CGMainDisplayID() == id) {
-      logDisplays("main observed");
+    CGDirectDisplayID cachedMain = CGMainDisplayID();
+    // The active list is ordered with the main display first. Enumerate each
+    // time instead of polling a scalar observation from before reconfiguration.
+    count = 0;
+    err = CGGetActiveDisplayList(64, displays, &count);
+    if (err == kCGErrorSuccess && count > 0 && count < 64 && displays[0] == id &&
+        CGPointEqualToPoint(CGDisplayBounds(id).origin, CGPointZero)) {
+      if (cachedMain != id)
+        fprintf(stderr, "[native_display_lifecycle] main requested=%u activeListMain=%u scalarBefore=%u scalarAfter=%u\n",
+                id, displays[0], cachedMain, CGMainDisplayID());
       return YES;
     }
     // The helper configures WindowServer in another process. Service this
@@ -152,16 +164,39 @@ static BOOL waitForMain(CGDirectDisplayID id) {
     if (CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.1, false) == kCFRunLoopRunFinished)
       usleep(100000);
   }
+  fprintf(stderr, "[native_display_lifecycle] main wait expired requested=%u listError=%d count=%u activeListMain=%u\n",
+          id, err, count, err == kCGErrorSuccess && count ? displays[0] : 0);
   logDisplays("main wait expired");
   return NO;
 }
 
 static BOOL waitForRemoval(CGDirectDisplayID id) {
+  CGDirectDisplayID displays[64];
+  uint32_t count = 0;
+  CGError err = kCGErrorSuccess;
   for (int i = 0; i < 100; ++i) {
-    if (!CGDisplayIsOnline(id)) return YES;
+    boolean_t cachedOnline = CGDisplayIsOnline(id);
+    count = 0;
+    err = CGGetOnlineDisplayList(64, displays, &count);
+    if (err == kCGErrorSuccess && count < 64) {
+      BOOL listed = NO;
+      for (uint32_t j = 0; j < count; ++j) {
+        if (displays[j] == id) { listed = YES; break; }
+      }
+      // Absence from a complete online list proves removal, including mirror
+      // slaves. An API error or a potentially truncated list does not.
+      if (!listed) {
+        if (cachedOnline)
+          fprintf(stderr, "[native_display_lifecycle] removed display=%u onlineCount=%u scalarBefore=%d scalarAfter=%d\n",
+                  id, count, cachedOnline, CGDisplayIsOnline(id));
+        return YES;
+      }
+    }
     if (CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.1, false) == kCFRunLoopRunFinished)
       usleep(100000);
   }
+  fprintf(stderr, "[native_display_lifecycle] removal wait expired display=%u listError=%d count=%u scalarOnline=%d\n",
+          id, err, count, CGDisplayIsOnline(id));
   return NO;
 }
 
@@ -276,14 +311,18 @@ int main(int argc, char **argv) {
     // The wrapper first queries online state after receiving the helper's ID.
     failNextOnlineObservation = YES;
     uint32_t failedCreation = virtual_display_ensure(1280, 720, 60, "primary");
+    CGDirectDisplayID failedDisplay = unavailableID;
     require(failedCreation == 0 && !failNextOnlineObservation && unavailableID != 0,
             "acknowledged fresh creation fails visibility");
     require(observedHelper > 0, "fresh creation observed helper");
     errno = 0;
     require(waitpid(observedHelper, NULL, WNOHANG) == -1 && errno == ECHILD,
             "failed fresh creation reaps helper before returning");
-    require(virtual_display_get_id() == 0 && waitForRemoval(unavailableID),
-            "failed fresh creation releases ownership and display");
+    uint32_t remainingOwnedDisplay = virtual_display_get_id();
+    fprintf(stderr, "[native_display_lifecycle] failed creation display=%u remainingOwnedDisplay=%u helper=%d\n",
+            failedDisplay, remainingOwnedDisplay, observedHelper);
+    require(remainingOwnedDisplay == 0, "failed fresh creation releases ownership");
+    require(waitForRemoval(failedDisplay), "failed fresh creation removes display");
     require(waitForMain(originalMain), "failed fresh creation restores original main");
 
     uint32_t id = virtual_display_ensure(1280, 720, 60, "primary");
