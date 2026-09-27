@@ -352,7 +352,8 @@ static CGError fixtureOrigin(CGDisplayConfigRef config, CGDirectDisplayID id, CG
   return err;
 }
 
-static CGDirectDisplayID addLocalDisplay(CGPoint origin, BOOL insertBeforeLocals) {
+static CGDirectDisplayID addLocalDisplayWithMode(CGPoint origin, BOOL insertBeforeLocals,
+                                                unsigned int width, unsigned int height, double fps) {
   logDisplays("before fixture creation");
   CGDirectDisplayID expected[64];
   CGRect before[64];
@@ -366,10 +367,8 @@ static CGDirectDisplayID addLocalDisplay(CGPoint origin, BOOL insertBeforeLocals
   descriptor.vendorID = 0xF0F0;
   descriptor.productID = 0x5679;
   descriptor.serialNum = (unsigned int)getpid() + fixtureSerial++;
-  // Wider than the 1280px VD so parking at the translated main edge also
-  // intersects this local display when restoring from primary.
-  descriptor.maxPixelsWide = 1600;
-  descriptor.maxPixelsHigh = 600;
+  descriptor.maxPixelsWide = width;
+  descriptor.maxPixelsHigh = height;
   descriptor.sizeInMillimeters = CGSizeMake(300, 225);
   descriptor.whitePoint = CGPointMake(0.3127, 0.3290);
   descriptor.redPrimary = CGPointMake(0.64, 0.33);
@@ -378,7 +377,7 @@ static CGDirectDisplayID addLocalDisplay(CGPoint origin, BOOL insertBeforeLocals
   [descriptor setDispatchQueue:dispatch_get_main_queue()];
   CGVirtualDisplaySettings *settings = [[CGVirtualDisplaySettings alloc] init];
   settings.hiDPI = 0;
-  settings.modes = @[[[CGVirtualDisplayMode alloc] initWithWidth:1600 height:600 refreshRate:60]];
+  settings.modes = @[[[CGVirtualDisplayMode alloc] initWithWidth:width height:height refreshRate:fps]];
   localFixture = [[CGVirtualDisplay alloc] initWithDescriptor:descriptor];
   require(localFixture && [localFixture applySettings:settings], "local native fixture creation");
   CGDirectDisplayID id = localFixture.displayID;
@@ -401,7 +400,7 @@ static CGDirectDisplayID addLocalDisplay(CGPoint origin, BOOL insertBeforeLocals
       if (err != kCGErrorSuccess) break;
     }
     if (expected[i] == main) continue;
-    if (insertBeforeLocals) before[i].origin.x += 1600;
+    if (insertBeforeLocals) before[i].origin.x += width;
     err = fixtureOrigin(config, expected[i], before[i].origin);
   }
   if (err == kCGErrorSuccess) err = fixtureOrigin(config, id, origin);
@@ -423,6 +422,26 @@ static CGDirectDisplayID addLocalDisplay(CGPoint origin, BOOL insertBeforeLocals
   }
   logDisplays("after fixture configuration");
   return id;
+}
+
+static CGDirectDisplayID addLocalDisplay(CGPoint origin, BOOL insertBeforeLocals) {
+  // Wider than the 1280px VD so parking at the translated main edge also
+  // intersects this local display when restoring from primary.
+  return addLocalDisplayWithMode(origin, insertBeforeLocals, 1600, 600, 60);
+}
+
+static void logMirrorModes(const char *phase, CGDirectDisplayID slave, CGDirectDisplayID master) {
+  CGDirectDisplayID ids[] = {slave, master};
+  for (int i = 0; i < 2; ++i) {
+    CGDisplayModeRef mode = CGDisplayCopyDisplayMode(ids[i]);
+    fprintf(stderr, "[native_display_lifecycle] %s slave=%u master=%u participant=%u modePresent=%d logical=%zux%zu pixels=%zux%zu hz=%.2f\n",
+            phase, slave, master, ids[i], mode != NULL,
+            mode ? CGDisplayModeGetWidth(mode) : 0, mode ? CGDisplayModeGetHeight(mode) : 0,
+            mode ? CGDisplayModeGetPixelWidth(mode) : 0, mode ? CGDisplayModeGetPixelHeight(mode) : 0,
+            mode ? CGDisplayModeGetRefreshRate(mode) : 0.0);
+    if (mode) CGDisplayModeRelease(mode);
+  }
+  fflush(stderr);
 }
 
 static void crashCase(char *executable, BOOL stoppedHelper) {
@@ -687,7 +706,7 @@ int main(int argc, char **argv) {
     for (uint32_t i = 0; i < count; ++i) right = MAX(right, CGRectGetMaxX(CGDisplayBounds(displays[i])));
     right = MAX(right, CGRectGetMaxX(CGDisplayBounds(changed)));
     CGPoint mirrorOrigin = CGPointMake(right, 0);
-    CGDirectDisplayID mirrorLocal = addLocalDisplay(mirrorOrigin, NO);
+    CGDirectDisplayID mirrorLocal = addLocalDisplayWithMode(mirrorOrigin, NO, 1440, 900, 60);
     pid_t mirrorHelper = observedHelper;
     require(virtual_display_apply_layout("extend", originalMain) && waitForMain(originalMain),
             "helper remembers independent mirror fixture");
@@ -695,8 +714,14 @@ int main(int argc, char **argv) {
     CGError reverseErr = CGBeginDisplayConfiguration(&reverseConfig);
     require(reverseErr == kCGErrorSuccess, "reverse mirror begin");
     reverseErr = CGConfigureDisplayMirrorOfDisplay(reverseConfig, mirrorLocal, changed);
-    if (reverseErr == kCGErrorSuccess) reverseErr = CGCompleteDisplayConfiguration(reverseConfig, kCGConfigureForAppOnly);
-    else CGCancelDisplayConfiguration(reverseConfig);
+    if (reverseErr == kCGErrorSuccess) {
+      logMirrorModes("before reverse mirror completion", mirrorLocal, changed);
+      reverseErr = CGCompleteDisplayConfiguration(reverseConfig, kCGConfigureForAppOnly);
+      fprintf(stderr, "[native_display_lifecycle] reverse mirror completion returned slave=%u master=%u error=%d\n",
+              mirrorLocal, changed, reverseErr);
+      fflush(stderr);
+      logMirrorModes("after reverse mirror completion", mirrorLocal, changed);
+    } else CGCancelDisplayConfiguration(reverseConfig);
     require(reverseErr == kCGErrorSuccess && waitForMirror(mirrorLocal, changed, changed),
             "local fixture is online mirror slave of VD");
     require(virtual_display_apply_layout("mirror", mirrorLocal), "reverse mirror promotes preferred mirrored local");
