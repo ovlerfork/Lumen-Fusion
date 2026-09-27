@@ -23,6 +23,18 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
+      - name: Check native display lifecycle before the full build
+        run: |
+          test "$(uname -m)" = arm64
+          preflight="$RUNNER_TEMP/virtual-display-preflight"
+          mkdir -p "$preflight"
+          xcrun clang -fobjc-arc -fblocks -mmacosx-version-min=14.0 \
+            src/platform/macos/vd_helper.m \
+            -framework Foundation -framework AppKit -framework CoreGraphics \
+            -F/System/Library/PrivateFrameworks -framework SkyLight \
+            -o "$preflight/vd_helper"
+          DIAGNOSTICS="$DIAGNOSTICS/preflight" \
+            bash scripts/validate-macos-virtual-display.sh "$preflight/vd_helper"
       - name: Initialize macOS dependencies
         run: |
           test "$(uname -m)" = arm64

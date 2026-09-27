@@ -30,12 +30,18 @@ static int interruptedWait;
 static pid_t observedHelper;
 static CGDirectDisplayID unavailableID;
 static BOOL offlineObservation, inactiveObservation;
+static BOOL failNextOnlineObservation;
 pid_t native_test_waitpid(pid_t pid, int *status, int options) {
   if (pid > 0) observedHelper = pid;
   if (interruptedWait) { --interruptedWait; errno = EINTR; return -1; }
   return waitpid(pid, status, options);
 }
 boolean_t native_test_display_online(CGDirectDisplayID id) {
+  if (failNextOnlineObservation) {
+    failNextOnlineObservation = NO;
+    unavailableID = id;
+    return false;
+  }
   return id == unavailableID && offlineObservation ? false : CGDisplayIsOnline(id);
 }
 boolean_t native_test_display_active(CGDirectDisplayID id) {
@@ -74,6 +80,22 @@ static pid_t crashGroup;
 static BOOL crashSignalsSent;
 static CGDirectDisplayID crashDisplay;
 
+static void logDisplays(const char *phase) {
+  CGDirectDisplayID displays[64];
+  uint32_t count = 0;
+  CGError err = CGGetOnlineDisplayList(64, displays, &count);
+  fprintf(stderr, "[native_display_lifecycle] %s pid=%d main=%u listError=%d count=%u\n",
+          phase, getpid(), CGMainDisplayID(), err, count);
+  if (err != kCGErrorSuccess) return;
+  for (uint32_t i = 0; i < count; ++i) {
+    CGDirectDisplayID id = displays[i];
+    CGRect bounds = CGDisplayBounds(id);
+    fprintf(stderr, "[native_display_lifecycle]   display=%u active=%d mirror=%u bounds=(%.0f,%.0f %.0fx%.0f)\n",
+            id, CGDisplayIsActive(id), CGDisplayMirrorsDisplay(id),
+            bounds.origin.x, bounds.origin.y, bounds.size.width, bounds.size.height);
+  }
+}
+
 static BOOL waitForRemoval(CGDirectDisplayID id);
 static BOOL cleanupCrash(void) {
   if (!crashGroup) return YES;
@@ -107,7 +129,9 @@ static BOOL cleanupCrash(void) {
 static void require(BOOL condition, const char *message) {
   if (!condition) {
     fprintf(stderr, "FAIL: %s\n", message);
+    logDisplays("failure before cleanup");
     interruptedWait = 0;
+    failNextOnlineObservation = NO;
     offlineObservation = inactiveObservation = NO;
     cleanupCrash();
     virtual_display_destroy();
@@ -117,22 +141,32 @@ static void require(BOOL condition, const char *message) {
 }
 
 static BOOL waitForMain(CGDirectDisplayID id) {
+  fprintf(stderr, "[native_display_lifecycle] wait main requested=%u observed=%u\n", id, CGMainDisplayID());
   for (int i = 0; i < 100; ++i) {
-    if (CGMainDisplayID() == id) return YES;
-    usleep(100000);
+    if (CGMainDisplayID() == id) {
+      logDisplays("main observed");
+      return YES;
+    }
+    // The helper configures WindowServer in another process. Service this
+    // process's display notifications within the existing polling interval.
+    if (CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.1, false) == kCFRunLoopRunFinished)
+      usleep(100000);
   }
+  logDisplays("main wait expired");
   return NO;
 }
 
 static BOOL waitForRemoval(CGDirectDisplayID id) {
   for (int i = 0; i < 100; ++i) {
     if (!CGDisplayIsOnline(id)) return YES;
-    usleep(100000);
+    if (CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.1, false) == kCFRunLoopRunFinished)
+      usleep(100000);
   }
   return NO;
 }
 
 static CGDirectDisplayID addLocalDisplay(CGPoint origin) {
+  logDisplays("before fixture creation");
   CGVirtualDisplayDescriptor *descriptor = [[CGVirtualDisplayDescriptor alloc] init];
   descriptor.name = @"Native lifecycle local fixture";
   descriptor.vendorID = 0xF0F0;
@@ -154,6 +188,8 @@ static CGDirectDisplayID addLocalDisplay(CGPoint origin) {
   localFixture = [[CGVirtualDisplay alloc] initWithDescriptor:descriptor];
   require(localFixture && [localFixture applySettings:settings], "local native fixture creation");
   CGDirectDisplayID id = localFixture.displayID;
+  fprintf(stderr, "[native_display_lifecycle] fixture=%u requestedOrigin=(%.0f,%.0f) scope=app-only\n",
+          id, origin.x, origin.y);
   BOOL online = NO;
   for (int i = 0; i < 100; ++i) {
     if (CGDisplayIsOnline(id)) { online = YES; break; }
@@ -168,6 +204,7 @@ static CGDirectDisplayID addLocalDisplay(CGPoint origin) {
   if (err == kCGErrorSuccess) err = CGCompleteDisplayConfiguration(config, kCGConfigureForAppOnly);
   else CGCancelDisplayConfiguration(config);
   require(err == kCGErrorSuccess, "fixture positioned to the right");
+  logDisplays("after fixture configuration");
   return id;
 }
 
@@ -236,6 +273,19 @@ int main(int argc, char **argv) {
             "test needs a usable original display");
     for (uint32_t i = 0; i < count; ++i) bounds[i] = CGDisplayBounds(displays[i]);
 
+    // The wrapper first queries online state after receiving the helper's ID.
+    failNextOnlineObservation = YES;
+    uint32_t failedCreation = virtual_display_ensure(1280, 720, 60, "primary");
+    require(failedCreation == 0 && !failNextOnlineObservation && unavailableID != 0,
+            "acknowledged fresh creation fails visibility");
+    require(observedHelper > 0, "fresh creation observed helper");
+    errno = 0;
+    require(waitpid(observedHelper, NULL, WNOHANG) == -1 && errno == ECHILD,
+            "failed fresh creation reaps helper before returning");
+    require(virtual_display_get_id() == 0 && waitForRemoval(unavailableID),
+            "failed fresh creation releases ownership and display");
+    require(waitForMain(originalMain), "failed fresh creation restores original main");
+
     uint32_t id = virtual_display_ensure(1280, 720, 60, "primary");
     require(id != 0, "native VD creation");
     require(waitForMain(id), "VD becomes primary");
@@ -260,11 +310,15 @@ int main(int argc, char **argv) {
     CGPoint pluggedOrigin = CGPointMake(right, translation.y);
     CGDirectDisplayID plugged = addLocalDisplay(pluggedOrigin);
     CGPoint restoredPlugged = CGPointMake(pluggedOrigin.x - translation.x, pluggedOrigin.y - translation.y);
+    fprintf(stderr, "[native_display_lifecycle] fixture=%u expectedRestoredOrigin=(%.0f,%.0f) translation=(%.0f,%.0f)\n",
+            plugged, restoredPlugged.x, restoredPlugged.y, translation.x, translation.y);
     require(virtual_display_apply_layout("primary", 0), "primary observes hotplug");
     CGRect pluggedPrimary = CGDisplayBounds(plugged);
     require(virtual_display_apply_layout("primary", 0), "repeated primary");
     require(CGPointEqualToPoint(CGDisplayBounds(plugged).origin, pluggedPrimary.origin), "hotplug primary is idempotent");
+    logDisplays("before extension request");
     require(virtual_display_apply_layout("extend", originalMain), "extension acknowledgement");
+    logDisplays("extension acknowledged before servicing run loop");
     require(virtual_display_get_id() == id && waitForMain(originalMain), "extension keeps VD and restores local main");
     require(CGPointEqualToPoint(CGDisplayBounds(plugged).origin, restoredPlugged), "hotplug normalized into original frame");
     require(!CGRectIntersectsRect(CGDisplayBounds(id), CGDisplayBounds(plugged)), "extension clears right-side local display");

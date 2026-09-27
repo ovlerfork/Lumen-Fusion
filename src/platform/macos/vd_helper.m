@@ -122,6 +122,22 @@ static BOOL layoutChanged;
 // Current local origins = saved original origins + appliedTranslation.
 static NSPoint appliedTranslation;
 
+static void logLayout(const char *phase) {
+  CGDirectDisplayID displays[64];
+  uint32_t count = 0;
+  CGError err = CGGetOnlineDisplayList(64, displays, &count);
+  fprintf(stderr, "[vd_helper] %s pid=%d main=%u listError=%d count=%u translation=(%.0f,%.0f)\n",
+          phase, getpid(), CGMainDisplayID(), err, count, appliedTranslation.x, appliedTranslation.y);
+  if (err != kCGErrorSuccess) return;
+  for (uint32_t i = 0; i < count; ++i) {
+    CGDirectDisplayID id = displays[i];
+    CGRect bounds = CGDisplayBounds(id);
+    fprintf(stderr, "[vd_helper]   display=%u active=%d mirror=%u bounds=(%.0f,%.0f %.0fx%.0f)\n",
+            id, CGDisplayIsActive(id), CGDisplayMirrorsDisplay(id),
+            bounds.origin.x, bounds.origin.y, bounds.size.width, bounds.size.height);
+  }
+}
+
 static BOOL rememberDisplays(void) {
   CGDirectDisplayID displays[64];
   uint32_t count = 0;
@@ -135,6 +151,9 @@ static BOOL rememberDisplays(void) {
     origin.y -= appliedTranslation.y;
     originalOrigins[@(id)] = [NSValue valueWithPoint:origin];
     originalMirrors[@(id)] = @(CGDisplayMirrorsDisplay(id));
+    fprintf(stderr, "[vd_helper] snapshot display=%u savedOrigin=(%.0f,%.0f) mirror=%u translation=(%.0f,%.0f)\n",
+            id, origin.x, origin.y, originalMirrors[@(id)].unsignedIntValue,
+            appliedTranslation.x, appliedTranslation.y);
   }
   return YES;
 }
@@ -153,6 +172,8 @@ static CGDirectDisplayID localMain(CGDirectDisplayID virtualID, CGDirectDisplayI
 
 static void restoreLayout(void) {
   if (!layoutChanged) return;
+  logLayout("before restore");
+  fprintf(stderr, "[vd_helper] restore requestedMain=%u\n", originalMain);
   CGDisplayConfigRef config = NULL;
   CGError err = CGBeginDisplayConfiguration(&config);
   if (err != kCGErrorSuccess) {
@@ -170,11 +191,15 @@ static void restoreLayout(void) {
     destinationRight = MAX(destinationRight, origin.x + CGDisplayBounds(id).size.width);
     CGDirectDisplayID mirror = originalMirrors[key].unsignedIntValue;
     if (mirror && !CGDisplayIsOnline(mirror)) mirror = 0;
+    fprintf(stderr, "[vd_helper] restore request display=%u origin=(%.0f,%.0f) mirror=%u\n",
+            id, origin.x, origin.y, mirror);
     if (CGConfigureDisplayMirrorOfDisplay(config, id, mirror) != kCGErrorSuccess) err = kCGErrorFailure;
     if (CGConfigureDisplayOrigin(config, id, (int32_t)origin.x, (int32_t)origin.y) != kCGErrorSuccess) err = kCGErrorFailure;
   }
   if (keepAlive && CGDisplayIsOnline(keepAlive.displayID)) {
     // Park beyond every local's destination, not its currently translated bounds.
+    fprintf(stderr, "[vd_helper] restore request display=%u origin=(%.0f,0) mirror=0\n",
+            keepAlive.displayID, destinationRight);
     if (CGConfigureDisplayOrigin(config, keepAlive.displayID, (int32_t)destinationRight, 0) != kCGErrorSuccess)
       err = kCGErrorFailure;
   }
@@ -185,15 +210,22 @@ static void restoreLayout(void) {
       fprintf(stderr, "[vd_helper] Could not cancel layout restoration: %d\n", cancelErr);
   }
   if (err != kCGErrorSuccess) fprintf(stderr, "[vd_helper] Could not restore display layout: %d\n", err);
+  logLayout("after restore completion");
 }
 
 static BOOL applyLayout(CGDirectDisplayID virtualID, vd_layout_t layout, CGDirectDisplayID preferred) {
   if (layout == VD_LAYOUT_SYSTEM) return YES;
+  logLayout("before layout");
   if (!rememberDisplays()) return NO;
   CGDirectDisplayID main = localMain(virtualID, preferred);
+  const char *name = layout == VD_LAYOUT_PRIMARY ? "primary" : layout == VD_LAYOUT_MIRROR ? "mirror" : "extend";
+  fprintf(stderr, "[vd_helper] layout=%s virtual=%u preferred=%u local=%u requestedMain=%u\n",
+          name, virtualID, preferred, main, layout == VD_LAYOUT_PRIMARY ? virtualID : main);
   if (layout == VD_LAYOUT_MIRROR && !main) return YES; // No local master in a headless session.
   CGDisplayConfigRef config = NULL;
   if (CGBeginDisplayConfiguration(&config) != kCGErrorSuccess) return NO;
+  fprintf(stderr, "[vd_helper] request virtual=%u mirror=%u\n",
+          virtualID, layout == VD_LAYOUT_MIRROR ? main : kCGNullDirectDisplay);
   CGError err = CGConfigureDisplayMirrorOfDisplay(config, virtualID,
       layout == VD_LAYOUT_MIRROR ? main : kCGNullDirectDisplay);
   NSPoint translation = appliedTranslation;
@@ -201,9 +233,11 @@ static BOOL applyLayout(CGDirectDisplayID virtualID, vd_layout_t layout, CGDirec
     // Unmirror local displays that WindowServer attached to our VD.
     for (NSNumber *key in originalOrigins) {
       CGDirectDisplayID id = key.unsignedIntValue;
-      if (CGDisplayIsOnline(id) && CGDisplayMirrorsDisplay(id) == virtualID &&
-          CGConfigureDisplayMirrorOfDisplay(config, id, kCGNullDirectDisplay) != kCGErrorSuccess)
-        err = kCGErrorFailure;
+      if (CGDisplayIsOnline(id) && CGDisplayMirrorsDisplay(id) == virtualID) {
+        fprintf(stderr, "[vd_helper] request display=%u mirror=0\n", id);
+        if (CGConfigureDisplayMirrorOfDisplay(config, id, kCGNullDirectDisplay) != kCGErrorSuccess)
+          err = kCGErrorFailure;
+      }
     }
     NSPoint anchor = main ? originalOrigins[@(main)].pointValue : NSZeroPoint;
     CGFloat left = anchor.x;
@@ -221,19 +255,34 @@ static BOOL applyLayout(CGDirectDisplayID virtualID, vd_layout_t layout, CGDirec
       origin.x += translation.x;
       origin.y += translation.y;
       right = MAX(right, origin.x + CGDisplayBounds(id).size.width);
+      fprintf(stderr, "[vd_helper] request display=%u origin=(%.0f,%.0f) savedOrigin=(%.0f,%.0f)\n",
+              id, origin.x, origin.y, originalOrigins[key].pointValue.x, originalOrigins[key].pointValue.y);
       if (CGConfigureDisplayOrigin(config, id, (int32_t)origin.x,
                                    (int32_t)origin.y) != kCGErrorSuccess) err = kCGErrorFailure;
     }
-    if (layout != VD_LAYOUT_MIRROR &&
-        CGConfigureDisplayOrigin(config, virtualID, layout == VD_LAYOUT_PRIMARY ? 0 : (int32_t)right, 0) != kCGErrorSuccess)
-      err = kCGErrorFailure;
-    if (layout != VD_LAYOUT_PRIMARY && main && CGConfigureDisplayOrigin(config, main, 0, 0) != kCGErrorSuccess)
-      err = kCGErrorFailure;
+    if (layout != VD_LAYOUT_MIRROR) {
+      fprintf(stderr, "[vd_helper] request virtual=%u origin=(%.0f,0)\n",
+              virtualID, layout == VD_LAYOUT_PRIMARY ? 0.0 : right);
+      if (CGConfigureDisplayOrigin(config, virtualID, layout == VD_LAYOUT_PRIMARY ? 0 : (int32_t)right, 0) != kCGErrorSuccess)
+        err = kCGErrorFailure;
+    }
+    if (layout != VD_LAYOUT_PRIMARY && main) {
+      fprintf(stderr, "[vd_helper] request main=%u origin=(0,0) last\n", main);
+      if (CGConfigureDisplayOrigin(config, main, 0, 0) != kCGErrorSuccess) err = kCGErrorFailure;
+    }
   }
-  if (err != kCGErrorSuccess) { CGCancelDisplayConfiguration(config); return NO; }
+  if (err != kCGErrorSuccess) {
+    fprintf(stderr, "[vd_helper] layout=%s configuration failed: %d\n", name, err);
+    CGCancelDisplayConfiguration(config);
+    return NO;
+  }
   layoutChanged = YES;
-  if (CGCompleteDisplayConfiguration(config, kCGConfigureForAppOnly) != kCGErrorSuccess) return NO;
-  appliedTranslation = translation;
+  err = CGCompleteDisplayConfiguration(config, kCGConfigureForAppOnly);
+  fprintf(stderr, "[vd_helper] layout=%s completion=%d requestedMain=%u observedMain=%u\n",
+          name, err, layout == VD_LAYOUT_PRIMARY ? virtualID : main, CGMainDisplayID());
+  if (err == kCGErrorSuccess) appliedTranslation = translation;
+  logLayout("after layout completion");
+  if (err != kCGErrorSuccess) return NO;
   return YES;
 }
 
@@ -494,6 +543,7 @@ int main(int argc, const char *argv[]) {
     char command[128];
     size_t used = 0;
     while (!shouldExit) {
+      BOOL handledLayout = NO;
       if (managed) {
         char c;
         ssize_t n;
@@ -506,6 +556,7 @@ int main(int argc, const char *argv[]) {
                 (!strcmp(requested, "extend") || !strcmp(requested, "primary") ||
                  !strcmp(requested, "mirror") || !strcmp(requested, "system"));
             BOOL ok = valid && CGDisplayIsOnline(resultID) && applyLayout(resultID, parseLayout(requested), localID);
+            handledLayout = valid;
             fprintf(stdout, "%u\n", ok ? resultID : 0);
             fflush(stdout);
             used = 0;
@@ -516,6 +567,7 @@ int main(int argc, const char *argv[]) {
       }
       if (CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.1, false) == kCFRunLoopRunFinished)
         usleep(100000);
+      if (handledLayout) logLayout("after command run loop");
     }
 
     fprintf(stderr, "[vd_helper] Shutting down, releasing display %u\n", resultID);

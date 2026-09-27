@@ -190,7 +190,10 @@ static uint32_t createLocked(int width, int height, int fps, const char *layout)
   if (!readReply(&displayID, 10.0) || !displayID) { stopLocked(); return 0; }
   vd_display_id = displayID;
   vd_width = width; vd_height = height; vd_fps = fps;
-  if (childStateLocked() != VD_CHILD_LIVE || !visibleLocked()) return 0;
+  if (childStateLocked() != VD_CHILD_LIVE || !visibleLocked()) {
+    stopLocked();
+    return 0;
+  }
   [@(displayID).stringValue writeToFile:@"/tmp/sunshine_vd_id" atomically:YES encoding:NSUTF8StringEncoding error:nil];
   return displayID;
 }
