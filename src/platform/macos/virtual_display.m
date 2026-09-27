@@ -152,7 +152,11 @@ static uint32_t visibleLocked(void) {
   if (!listedDisplay(online, onlineCount, vd_display_id)) return 0;
   CGDirectDisplayID master = CGDisplayMirrorsDisplay(vd_display_id);
   CGDirectDisplayID target = master ? master : vd_display_id;
-  return listedDisplay(active, activeCount, target) ? target : 0;
+  if (!listedDisplay(active, activeCount, target)) return 0;
+  // A mirror slave cannot simultaneously be an active independent display.
+  // Reject a scalar mirror observation that disagrees with the fresh list.
+  if (master && (listedDisplay(active, activeCount, vd_display_id) || CGDisplayMirrorsDisplay(master))) return 0;
+  return target;
 }
 
 static BOOL waitForCreationLocked(void) {

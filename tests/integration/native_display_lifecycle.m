@@ -302,6 +302,42 @@ static BOOL waitForDisplays(const CGDirectDisplayID *expected, uint32_t expected
   return NO;
 }
 
+// Observe the real mirror set in this process, after servicing its own display
+// notifications. A reply or a scalar mirror ID alone is insufficient.
+static BOOL waitForMirror(CGDirectDisplayID slave, CGDirectDisplayID master, CGDirectDisplayID owned) {
+  uint32_t onlineCount = 0, activeCount = 0;
+  CGError onlineErr = kCGErrorSuccess, activeErr = kCGErrorSuccess;
+  for (int attempt = 0; attempt < 100; ++attempt) {
+    if (virtual_display_get_id() != owned) break;
+    CGDirectDisplayID online[64], active[64];
+    onlineErr = CGGetOnlineDisplayList(64, online, &onlineCount);
+    activeErr = CGGetActiveDisplayList(64, active, &activeCount);
+    if (onlineErr == kCGErrorSuccess && activeErr == kCGErrorSuccess && onlineCount < 64 && activeCount < 64) {
+      BOOL slaveOnline = NO, masterOnline = NO, slaveActive = NO, masterActive = NO, complete = YES;
+      for (uint32_t i = 0; i < onlineCount; ++i) {
+        slaveOnline |= online[i] == slave;
+        masterOnline |= online[i] == master;
+      }
+      for (uint32_t i = 0; i < activeCount; ++i) {
+        slaveActive |= active[i] == slave;
+        masterActive |= active[i] == master;
+        BOOL found = NO;
+        for (uint32_t j = 0; j < onlineCount; ++j) found |= active[i] == online[j];
+        complete &= found;
+      }
+      if (complete && slaveOnline && masterOnline && !slaveActive && masterActive &&
+          CGDisplayMirrorsDisplay(slave) == master && !CGDisplayMirrorsDisplay(master) &&
+          virtual_display_get_target_id() == (slave == owned ? master : owned)) return YES;
+    }
+    if (CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.05, false) == kCFRunLoopRunFinished)
+      usleep(50000);
+  }
+  fprintf(stderr, "[native_display_lifecycle] mirror unavailable slave=%u master=%u owned=%u retained=%u onlineError=%d online=%u activeError=%d active=%u\n",
+          slave, master, owned, virtual_display_get_id(), onlineErr, onlineCount, activeErr, activeCount);
+  logDisplays("mirror membership failed");
+  return NO;
+}
+
 static CGError fixtureOrigin(CGDisplayConfigRef config, CGDirectDisplayID id, CGPoint origin) {
   CGError err = CGConfigureDisplayOrigin(config, id, (int32_t)origin.x, (int32_t)origin.y);
   fprintf(stderr, "[native_display_lifecycle] fixture origin display=%u requested=(%.0f,%.0f) error=%d\n",
@@ -638,10 +674,45 @@ int main(int argc, char **argv) {
     require(mode && CGDisplayModeGetPixelWidth(mode) == 1440 && CGDisplayModeGetPixelHeight(mode) == 900,
             "changed mode uses requested pixels");
     CGDisplayModeRelease(mode);
+    // Keep the runner's display independent while exercising reversal with an
+    // owned local fixture. Remember its independent origin before mirroring it.
+    right = 0;
+    for (uint32_t i = 0; i < count; ++i) right = MAX(right, CGRectGetMaxX(CGDisplayBounds(displays[i])));
+    right = MAX(right, CGRectGetMaxX(CGDisplayBounds(changed)));
+    CGPoint mirrorOrigin = CGPointMake(right, 0);
+    CGDirectDisplayID mirrorLocal = addLocalDisplay(mirrorOrigin, NO);
+    pid_t mirrorHelper = observedHelper;
+    require(virtual_display_apply_layout("extend", originalMain) && waitForMain(originalMain),
+            "helper remembers independent mirror fixture");
+    CGDisplayConfigRef reverseConfig;
+    CGError reverseErr = CGBeginDisplayConfiguration(&reverseConfig);
+    require(reverseErr == kCGErrorSuccess, "reverse mirror begin");
+    reverseErr = CGConfigureDisplayMirrorOfDisplay(reverseConfig, mirrorLocal, changed);
+    if (reverseErr == kCGErrorSuccess) reverseErr = CGCompleteDisplayConfiguration(reverseConfig, kCGConfigureForAppOnly);
+    else CGCancelDisplayConfiguration(reverseConfig);
+    require(reverseErr == kCGErrorSuccess && waitForMirror(mirrorLocal, changed, changed),
+            "local fixture is online inactive slave of VD");
+    require(virtual_display_apply_layout("mirror", mirrorLocal), "reverse mirror promotes preferred inactive local");
+    require(waitForMirror(changed, mirrorLocal, changed), "VD becomes slave of promoted local with usable capture target");
+    require(virtual_display_get_id() == changed && observedHelper == mirrorHelper,
+            "reverse mirror retains same helper and VD");
+    require(virtual_display_apply_layout("extend", originalMain) && waitForMain(originalMain),
+            "extension restores local main after reverse mirror");
+    CGDirectDisplayID independent[] = {changed, mirrorLocal};
+    require(waitForDisplays(independent, 2, YES) && !CGDisplayMirrorsDisplay(mirrorLocal) &&
+            !CGDisplayMirrorsDisplay(changed), "mirror participants return to independent displays");
+    require(CGPointEqualToPoint(CGDisplayBounds(mirrorLocal).origin, mirrorOrigin), "reverse mirror preserves saved fixture origin");
+    for (uint32_t i = 0; i < count; ++i)
+      require(CGPointEqualToPoint(CGDisplayBounds(displays[i]).origin, bounds[i].origin), "reverse mirror restores user local origins");
+    localFixture = nil;
+    require(waitForRemoval(mirrorLocal), "reverse mirror fixture cleanup");
+
     require(virtual_display_apply_layout("mirror", originalMain), "mirror acknowledgement");
-    require(virtual_display_get_target_id() == originalMain, "mirror capture targets master");
+    require(waitForMirror(changed, originalMain, changed), "mirror capture targets master");
     virtual_display_destroy();
-    require(waitForRemoval(changed), "mirror cleanup");
+    require(waitForRemoval(changed) && waitForMain(originalMain), "mirror cleanup restores local main");
+    for (uint32_t i = 0; i < count; ++i)
+      require(CGPointEqualToPoint(CGDisplayBounds(displays[i]).origin, bounds[i].origin), "mirror cleanup restores user local origins");
 
     crashCase(argv[0], NO);
     require(waitForMain(originalMain), "parent crash restores original main");

@@ -36,6 +36,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <stdatomic.h>
+#include <time.h>
 
 // Private CGVirtualDisplay API interface declarations (macOS 14+)
 @interface CGVirtualDisplayMode : NSObject
@@ -82,6 +84,7 @@ static CGVirtualDisplayDescriptor *keepDesc = nil;
 
 static volatile sig_atomic_t shouldExit = 0;
 static BOOL traceLayouts;
+static atomic_bool displayTerminated;
 
 // Requested display layout, from argv[4].
 typedef enum {
@@ -197,16 +200,45 @@ static void rememberDisplays(const DisplayLists *lists) {
   }
 }
 
+// A local mirroring our VD is online but inactive. It can become the master
+// once detached; excluding it would mistake reverse mirroring for headlessness.
+static BOOL localMainCandidate(const DisplayLists *lists, CGDirectDisplayID virtualID, CGDirectDisplayID id) {
+  return id && id != virtualID && listedDisplay(lists->online, lists->onlineCount, id) &&
+         (listedDisplay(lists->active, lists->activeCount, id) || CGDisplayMirrorsDisplay(id) == virtualID);
+}
+
 static CGDirectDisplayID localMain(const DisplayLists *lists, CGDirectDisplayID virtualID, CGDirectDisplayID preferred) {
-  if (preferred && preferred != virtualID && listedDisplay(lists->active, lists->activeCount, preferred))
-    return preferred;
-  if (originalMain && originalMain != virtualID && listedDisplay(lists->active, lists->activeCount, originalMain))
-    return originalMain;
+  if (localMainCandidate(lists, virtualID, preferred)) return preferred;
+  if (localMainCandidate(lists, virtualID, originalMain)) return originalMain;
   for (uint32_t i = 0; i < lists->activeCount; ++i) {
     CGDirectDisplayID id = lists->active[i];
     if (id != virtualID) return id;
   }
+  for (uint32_t i = 0; i < lists->onlineCount; ++i)
+    if (localMainCandidate(lists, virtualID, lists->online[i])) return lists->online[i];
   return 0;
+}
+
+static BOOL waitForMirror(CGDirectDisplayID virtualID, CGDirectDisplayID master) {
+  struct timespec now;
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  double deadline = now.tv_sec + now.tv_nsec / 1e9 + 2.0;
+  DisplayLists lists = {0};
+  do {
+    if (atomic_load(&displayTerminated) || shouldExit) break;
+    if (readDisplayLists(&lists) &&
+        listedDisplay(lists.online, lists.onlineCount, virtualID) &&
+        listedDisplay(lists.active, lists.activeCount, master) &&
+        !listedDisplay(lists.active, lists.activeCount, virtualID) &&
+        CGDisplayMirrorsDisplay(virtualID) == master && !CGDisplayMirrorsDisplay(master)) return YES;
+    if (CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.05, false) == kCFRunLoopRunFinished)
+      usleep(50000);
+    clock_gettime(CLOCK_MONOTONIC, &now);
+  } while (now.tv_sec + now.tv_nsec / 1e9 < deadline);
+  fprintf(stderr, "[vd_helper] Mirror not observed: virtual=%u master=%u online=%u active=%u terminated=%d\n",
+          virtualID, master, lists.onlineCount, lists.activeCount, atomic_load(&displayTerminated));
+  logLayout("mirror observation failed");
+  return NO;
 }
 
 static CGError configureOrigin(CGDisplayConfigRef config, CGDirectDisplayID id, int32_t x, int32_t y) {
@@ -333,7 +365,8 @@ static BOOL releaseDisplayAndRestore(void) {
 
 static BOOL applyLayout(CGDirectDisplayID virtualID, vd_layout_t layout, CGDirectDisplayID preferred) {
   DisplayLists lists;
-  if (!readDisplayLists(&lists) || !listedDisplay(lists.online, lists.onlineCount, virtualID)) return NO;
+  if (atomic_load(&displayTerminated) || !readDisplayLists(&lists) ||
+      !listedDisplay(lists.online, lists.onlineCount, virtualID)) return NO;
   if (layout == VD_LAYOUT_SYSTEM) return YES;
   if (traceLayouts) logLayout("before layout");
   rememberDisplays(&lists);
@@ -348,13 +381,11 @@ static BOOL applyLayout(CGDirectDisplayID virtualID, vd_layout_t layout, CGDirec
     fprintf(stderr, "[vd_helper] layout=%s begin failed: %d\n", name, beginErr);
     return NO;
   }
-  if (traceLayouts) fprintf(stderr, "[vd_helper] request virtual=%u mirror=%u\n",
-          virtualID, layout == VD_LAYOUT_MIRROR ? main : kCGNullDirectDisplay);
-  CGError err = configureMirror(config, virtualID,
-      layout == VD_LAYOUT_MIRROR ? main : kCGNullDirectDisplay);
+  CGError err = kCGErrorSuccess;
   NSPoint translation = appliedTranslation;
   {
-    // Unmirror local displays that WindowServer attached to our VD.
+    // Detach reverse mirror slaves before assigning the VD to a local master,
+    // so no request introduces a mirror cycle, even within this transaction.
     for (uint32_t i = 0; i < lists.onlineCount; ++i) {
       CGDirectDisplayID id = lists.online[i];
       if (id != virtualID && CGDisplayMirrorsDisplay(id) == virtualID) {
@@ -363,6 +394,11 @@ static BOOL applyLayout(CGDirectDisplayID virtualID, vd_layout_t layout, CGDirec
           err = kCGErrorFailure;
       }
     }
+    if (traceLayouts) fprintf(stderr, "[vd_helper] request virtual=%u mirror=%u\n",
+            virtualID, layout == VD_LAYOUT_MIRROR ? main : kCGNullDirectDisplay);
+    if (configureMirror(config, virtualID,
+                        layout == VD_LAYOUT_MIRROR ? main : kCGNullDirectDisplay) != kCGErrorSuccess)
+      err = kCGErrorFailure;
     NSPoint anchor = main ? originalOrigins[@(main)].pointValue : NSZeroPoint;
     CGFloat left = anchor.x;
     for (uint32_t i = 0; i < lists.onlineCount; ++i) {
@@ -419,8 +455,11 @@ static BOOL applyLayout(CGDirectDisplayID virtualID, vd_layout_t layout, CGDirec
             name, err, listErr, requestedMain, observedMain);
     logLayout("after layout completion");
   }
-  if (err != kCGErrorSuccess || listErr != kCGErrorSuccess || count >= 64) return NO;
-  return YES;
+  if (err != kCGErrorSuccess || atomic_load(&displayTerminated)) return NO;
+  // Transaction completion alone does not prove a usable mirror set. Empty
+  // lists or a terminated VD must never acknowledge a successful transition.
+  if (layout == VD_LAYOUT_MIRROR) return waitForMirror(virtualID, main);
+  return listErr == kCGErrorSuccess && count > 0 && count < 64;
 }
 
 static vd_layout_t parseLayout(const char *s) {
@@ -501,6 +540,7 @@ static int runHelper(int argc, const char *argv[]) {
     desc.bluePrimary = CGPointMake(0.15, 0.06);
     [desc setDispatchQueue:dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0)];
     desc.terminationHandler = ^(id s, id d) {
+      atomic_store(&displayTerminated, true);
       fprintf(stderr, "[vd_helper] Virtual display terminated by system\n");
     };
 
@@ -680,7 +720,7 @@ static int runHelper(int argc, const char *argv[]) {
     DisplayLists readyLists;
     BOOL complete = readDisplayLists(&readyLists);
     CGDirectDisplayID master = complete ? CGDisplayMirrorsDisplay(resultID) : 0;
-    BOOL usable = complete && listedDisplay(readyLists.online, readyLists.onlineCount, resultID) &&
+    BOOL usable = !atomic_load(&displayTerminated) && complete && listedDisplay(readyLists.online, readyLists.onlineCount, resultID) &&
                   listedDisplay(readyLists.active, readyLists.activeCount, master ? master : resultID);
     CGDisplayModeRef observedMode = usable ? CGDisplayCopyDisplayMode(resultID) : NULL;
     fprintf(stderr, "[vd_helper] Ready display=%u usable=%d requestedPixels=%dx%d observedPixels=%zux%zu master=%u\n",
@@ -694,7 +734,7 @@ static int runHelper(int argc, const char *argv[]) {
 
     char command[128];
     size_t used = 0;
-    while (!shouldExit) {
+    while (!shouldExit && !atomic_load(&displayTerminated)) {
       BOOL handledLayout = NO;
       if (managed) {
         char c;
@@ -712,6 +752,7 @@ static int runHelper(int argc, const char *argv[]) {
             fprintf(stdout, "%u\n", ok ? resultID : 0);
             fflush(stdout);
             used = 0;
+            if (atomic_load(&displayTerminated)) break;
           } else if (used < sizeof(command) - 1) command[used++] = c;
           else { shouldExit = 1; break; }
         }
