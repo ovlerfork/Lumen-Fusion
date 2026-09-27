@@ -15,7 +15,7 @@ extern "C" {
  * @param width Display width in pixels.
  * @param height Display height in pixels.
  * @param fps Refresh rate in Hz.
- * @param layout Desired arrangement: "extend", "mirror", or "system" (leave the
+ * @param layout Desired arrangement: "extend", "primary", "mirror", or "system" (leave the
  *               mirror state to WindowServer's persisted configuration).
  *               NULL is treated as "extend".
  * @return The CGDirectDisplayID of the created display, or 0 on failure.
@@ -23,13 +23,35 @@ extern "C" {
 uint32_t virtual_display_create(int width, int height, int fps, const char *layout);
 
 /**
+ * Reuse a healthy helper with the same width/height/fps and apply the layout.
+ * Changed modes or a confirmed dead helper are explicitly recreated.
+ * Transient visibility/waitpid failures return 0 without dropping ownership;
+ * retry the same mode to resume the same display.
+ * Returns the VD ID, or 0 on failure. NULL/empty layout means extend.
+ * Adaptive policy must resolve to primary or extend before calling this API.
+ */
+uint32_t virtual_display_ensure(int width, int height, int fps, const char *layout);
+
+/**
+ * Temporarily change layout without replacing the helper or display ID.
+ * local_main_id selects an online active local main for extend/mirror; 0 selects
+ * the original main when available, then another active local display.
+ * Accepts extend/primary/mirror/system. System makes no arrangement changes.
+ * Returns 1 after helper acknowledgement, 0 on failure. A transport timeout
+ * stops the helper; a rejected layout leaves it available for retry.
+ * Original available display origins/main are restored before helper teardown.
+ * Calls are serialized; create/ensure/destroy may block for bounded IPC/stop.
+ */
+int virtual_display_apply_layout(const char *layout, uint32_t local_main_id);
+
+/**
  * @brief Destroy the currently active virtual display.
  */
 void virtual_display_destroy(void);
 
 /**
- * @brief Get the display ID of the currently active virtual display.
- * @return The CGDirectDisplayID, or 0 if no virtual display is active.
+ * @brief Get the owned display ID, including during temporary invisibility.
+ * @return The CGDirectDisplayID, or 0 if absent or the helper is confirmed dead.
  */
 uint32_t virtual_display_get_id(void);
 

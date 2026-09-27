@@ -3,10 +3,11 @@
  * @brief Helper process to create and hold a CGVirtualDisplay.
  *
  * Spawned by Sunshine to create virtual displays in a clean process context.
- * Usage: vd_helper <width> <height> <fps> [layout]
- *   layout: "extend" (default), "mirror", or "system"
+ * Usage: vd_helper <width> <height> <fps> [layout] [--managed]
+ *   layout: "extend" (default), "primary", "mirror", or "system"
  * Outputs: displayID on stdout (or "0" on failure)
- * Stays alive holding the display until SIGTERM is received.
+ * Managed stdin accepts "layout local_main_id\n" and replies with the ID or 0.
+ * EOF or a termination signal releases the display after layout restoration.
  *
  * CGVirtualDisplay creates the display object, then we:
  *   1. SLSConfigureDisplayEnabled activates it in WindowServer's display list
@@ -28,8 +29,13 @@
 #import <Foundation/Foundation.h>
 #import <AppKit/AppKit.h>
 #import <CoreGraphics/CoreGraphics.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <signal.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
 
 // Private CGVirtualDisplay API interface declarations (macOS 14+)
 @interface CGVirtualDisplayMode : NSObject
@@ -80,7 +86,8 @@ static volatile sig_atomic_t shouldExit = 0;
 typedef enum {
   VD_LAYOUT_EXTEND = 0,  // force extend (un-mirror)
   VD_LAYOUT_MIRROR,      // force mirroring of the main display
-  VD_LAYOUT_SYSTEM       // leave whatever WindowServer restored
+  VD_LAYOUT_SYSTEM,      // leave whatever WindowServer restored
+  VD_LAYOUT_PRIMARY
 } vd_layout_t;
 
 // Fixed EDID identity. WindowServer persists per-display settings (arrangement,
@@ -91,10 +98,8 @@ static const unsigned int kProductID = 0x5678;
 static const unsigned int kSerialNum = 0x53554E31;  // 'SUN1'
 
 static void handle_signal(int sig) {
+  (void)sig;
   shouldExit = 1;
-  dispatch_async(dispatch_get_main_queue(), ^{
-    CFRunLoopStop(CFRunLoopGetMain());
-  });
 }
 
 static BOOL checkDisplayInList(uint32_t targetID, uint32_t *outCount) {
@@ -109,106 +114,126 @@ static BOOL checkDisplayInList(uint32_t targetID, uint32_t *outCount) {
   return NO;
 }
 
-/**
- * Force the virtual display into "extend" mode (not mirrored).
- * macOS may auto-mirror new displays, which hides them from CGGetActiveDisplayList.
- * This un-mirrors the display and positions it to the right of the main display.
- */
-static void forceExtendMode(CGDirectDisplayID virtualID) {
-  CGDirectDisplayID mainDisplay = CGMainDisplayID();
+// Snapshot before creating the VD, because registration can change the main display.
+static NSMutableDictionary<NSNumber *, NSValue *> *originalOrigins;
+static NSMutableDictionary<NSNumber *, NSNumber *> *originalMirrors;
+static CGDirectDisplayID originalMain;
+static BOOL layoutChanged;
+// Current local origins = saved original origins + appliedTranslation.
+static NSPoint appliedTranslation;
 
-  // Check if main display is now mirroring our virtual display
-  CGDirectDisplayID mainMirrorTarget = CGDisplayMirrorsDisplay(mainDisplay);
-  if (mainMirrorTarget == virtualID) {
-    fprintf(stderr, "[vd_helper] Main display is mirroring us (%u), un-mirroring main\n", virtualID);
-    CGDisplayConfigRef config = NULL;
-    CGBeginDisplayConfiguration(&config);
-    if (config) {
-      CGConfigureDisplayMirrorOfDisplay(config, mainMirrorTarget, kCGNullDirectDisplay);
-      CGCompleteDisplayConfiguration(config, kCGConfigureForAppOnly);
-    }
+static BOOL rememberDisplays(void) {
+  CGDirectDisplayID displays[64];
+  uint32_t count = 0;
+  if (CGGetOnlineDisplayList(64, displays, &count) != kCGErrorSuccess || count == 64)
+    return NO;
+  for (uint32_t i = 0; i < count; ++i) {
+    CGDirectDisplayID id = displays[i];
+    if (id == keepAlive.displayID || originalOrigins[@(id)]) continue;
+    NSPoint origin = NSPointFromCGPoint(CGDisplayBounds(id).origin);
+    origin.x -= appliedTranslation.x;
+    origin.y -= appliedTranslation.y;
+    originalOrigins[@(id)] = [NSValue valueWithPoint:origin];
+    originalMirrors[@(id)] = @(CGDisplayMirrorsDisplay(id));
   }
-
-  // Check if our display is in a mirror set
-  if (CGDisplayIsInMirrorSet(virtualID)) {
-    fprintf(stderr, "[vd_helper] Display %u is in mirror set, un-mirroring\n", virtualID);
-    CGDisplayConfigRef config = NULL;
-    CGBeginDisplayConfiguration(&config);
-    if (config) {
-      CGConfigureDisplayMirrorOfDisplay(config, virtualID, kCGNullDirectDisplay);
-      CGCompleteDisplayConfiguration(config, kCGConfigureForAppOnly);
-    }
-  }
-
-  // Also check if virtual display is mirroring main
-  CGDirectDisplayID virtualMirrorTarget = CGDisplayMirrorsDisplay(virtualID);
-  if (virtualMirrorTarget != 0) {
-    fprintf(stderr, "[vd_helper] Display %u mirrors %u, un-mirroring\n", virtualID, virtualMirrorTarget);
-    CGDisplayConfigRef config = NULL;
-    CGBeginDisplayConfiguration(&config);
-    if (config) {
-      CGConfigureDisplayMirrorOfDisplay(config, virtualID, kCGNullDirectDisplay);
-      CGCompleteDisplayConfiguration(config, kCGConfigureForAppOnly);
-    }
-  }
-
-  // Position it to the right of main display
-  {
-    CGDisplayConfigRef config = NULL;
-    CGBeginDisplayConfiguration(&config);
-    if (config) {
-      size_t mainWidth = CGDisplayPixelsWide(mainDisplay);
-      CGConfigureDisplayOrigin(config, virtualID, (int32_t)mainWidth, 0);
-      CGCompleteDisplayConfiguration(config, kCGConfigureForAppOnly);
-    }
-  }
-
-  // If the virtual display became the main display, restore the original
-  CGDirectDisplayID newMain = CGMainDisplayID();
-  if (newMain == virtualID && newMain != mainDisplay) {
-    fprintf(stderr, "[vd_helper] Virtual display became main, restoring original main %u\n", mainDisplay);
-    CGDisplayConfigRef config = NULL;
-    CGBeginDisplayConfiguration(&config);
-    if (config) {
-      CGConfigureDisplayOrigin(config, mainDisplay, 0, 0);
-      CGCompleteDisplayConfiguration(config, kCGConfigureForAppOnly);
-    }
-  }
+  return YES;
 }
 
-/**
- * Put the virtual display into a mirror set with the main display.
- * The virtual display becomes the mirror slave, so the main display keeps
- * driving the mode and the two show identical content.
- */
-static void forceMirrorMode(CGDirectDisplayID virtualID) {
-  CGDirectDisplayID mainDisplay = CGMainDisplayID();
-  if (mainDisplay == virtualID) {
-    fprintf(stderr, "[vd_helper] Virtual display is the main display, cannot mirror it to itself\n");
-    return;
+static CGDirectDisplayID localMain(CGDirectDisplayID virtualID, CGDirectDisplayID preferred) {
+  if (preferred && preferred != virtualID && CGDisplayIsOnline(preferred) && CGDisplayIsActive(preferred))
+    return preferred;
+  if (originalMain && originalMain != virtualID && CGDisplayIsOnline(originalMain) && CGDisplayIsActive(originalMain))
+    return originalMain;
+  for (NSNumber *key in originalOrigins) {
+    CGDirectDisplayID id = key.unsignedIntValue;
+    if (id != virtualID && CGDisplayIsOnline(id) && CGDisplayIsActive(id)) return id;
   }
+  return 0;
+}
 
-  if (CGDisplayMirrorsDisplay(virtualID) == mainDisplay) {
-    fprintf(stderr, "[vd_helper] Display %u already mirrors main %u\n", virtualID, mainDisplay);
-    return;
-  }
-
+static void restoreLayout(void) {
+  if (!layoutChanged) return;
   CGDisplayConfigRef config = NULL;
-  CGBeginDisplayConfiguration(&config);
-  if (!config) {
-    fprintf(stderr, "[vd_helper] CGBeginDisplayConfiguration failed, cannot mirror\n");
-    return;
+  if (CGBeginDisplayConfiguration(&config) != kCGErrorSuccess) return;
+  CGError err = kCGErrorSuccess;
+  if (keepAlive && CGDisplayIsOnline(keepAlive.displayID) &&
+      CGConfigureDisplayMirrorOfDisplay(config, keepAlive.displayID, kCGNullDirectDisplay) != kCGErrorSuccess)
+    err = kCGErrorFailure;
+  for (NSNumber *key in originalOrigins) {
+    CGDirectDisplayID id = key.unsignedIntValue;
+    if (!CGDisplayIsOnline(id)) continue;
+    NSPoint origin = originalOrigins[key].pointValue;
+    CGDirectDisplayID mirror = originalMirrors[key].unsignedIntValue;
+    if (mirror && !CGDisplayIsOnline(mirror)) mirror = 0;
+    if (CGConfigureDisplayMirrorOfDisplay(config, id, mirror) != kCGErrorSuccess) err = kCGErrorFailure;
+    if (CGConfigureDisplayOrigin(config, id, (int32_t)origin.x, (int32_t)origin.y) != kCGErrorSuccess) err = kCGErrorFailure;
   }
-  CGError err = CGConfigureDisplayMirrorOfDisplay(config, virtualID, mainDisplay);
-  // kCGConfigureForSession so the mirror survives this helper's lifetime and is
-  // recorded by WindowServer against the display's (stable) identity.
-  CGError completeErr = CGCompleteDisplayConfiguration(config, kCGConfigureForSession);
-  fprintf(stderr, "[vd_helper] Mirror %u -> main %u: configure=%d complete=%d\n",
-          virtualID, mainDisplay, err, completeErr);
+  if (keepAlive && CGDisplayIsOnline(keepAlive.displayID)) {
+    // Vacate (0,0) before restoring the original main while the VD still exists.
+    CGRect bounds = CGDisplayBounds(originalMain);
+    if (CGConfigureDisplayOrigin(config, keepAlive.displayID, (int32_t)CGRectGetMaxX(bounds), 0) != kCGErrorSuccess)
+      err = kCGErrorFailure;
+  }
+  if (originalMain && CGDisplayIsOnline(originalMain) &&
+      CGConfigureDisplayOrigin(config, originalMain, 0, 0) != kCGErrorSuccess) err = kCGErrorFailure;
+  if (err == kCGErrorSuccess) err = CGCompleteDisplayConfiguration(config, kCGConfigureForAppOnly);
+  else CGCancelDisplayConfiguration(config);
+  if (err != kCGErrorSuccess) fprintf(stderr, "[vd_helper] Could not restore display layout: %d\n", err);
+}
+
+static BOOL applyLayout(CGDirectDisplayID virtualID, vd_layout_t layout, CGDirectDisplayID preferred) {
+  if (layout == VD_LAYOUT_SYSTEM) return YES;
+  if (!rememberDisplays()) return NO;
+  CGDirectDisplayID main = localMain(virtualID, preferred);
+  if (layout == VD_LAYOUT_MIRROR && !main) return YES; // No local master in a headless session.
+  CGDisplayConfigRef config = NULL;
+  if (CGBeginDisplayConfiguration(&config) != kCGErrorSuccess) return NO;
+  CGError err = CGConfigureDisplayMirrorOfDisplay(config, virtualID,
+      layout == VD_LAYOUT_MIRROR ? main : kCGNullDirectDisplay);
+  NSPoint translation = appliedTranslation;
+  {
+    // Unmirror local displays that WindowServer attached to our VD.
+    for (NSNumber *key in originalOrigins) {
+      CGDirectDisplayID id = key.unsignedIntValue;
+      if (CGDisplayIsOnline(id) && CGDisplayMirrorsDisplay(id) == virtualID &&
+          CGConfigureDisplayMirrorOfDisplay(config, id, kCGNullDirectDisplay) != kCGErrorSuccess)
+        err = kCGErrorFailure;
+    }
+    NSPoint anchor = main ? originalOrigins[@(main)].pointValue : NSZeroPoint;
+    CGFloat left = anchor.x;
+    for (NSNumber *key in originalOrigins) {
+      if (CGDisplayIsOnline(key.unsignedIntValue))
+        left = MIN(left, originalOrigins[key].pointValue.x);
+    }
+    CGFloat offset = layout == VD_LAYOUT_PRIMARY ? CGDisplayBounds(virtualID).size.width + anchor.x - left : 0;
+    translation = NSMakePoint(offset - anchor.x, -anchor.y);
+    CGFloat right = 0;
+    for (NSNumber *key in originalOrigins) {
+      CGDirectDisplayID id = key.unsignedIntValue;
+      if (!CGDisplayIsOnline(id)) continue;
+      NSPoint origin = originalOrigins[key].pointValue;
+      origin.x += translation.x;
+      origin.y += translation.y;
+      right = MAX(right, origin.x + CGDisplayBounds(id).size.width);
+      if (CGConfigureDisplayOrigin(config, id, (int32_t)origin.x,
+                                   (int32_t)origin.y) != kCGErrorSuccess) err = kCGErrorFailure;
+    }
+    if (layout != VD_LAYOUT_MIRROR &&
+        CGConfigureDisplayOrigin(config, virtualID, layout == VD_LAYOUT_PRIMARY ? 0 : (int32_t)right, 0) != kCGErrorSuccess)
+      err = kCGErrorFailure;
+    if (layout != VD_LAYOUT_PRIMARY && main && CGConfigureDisplayOrigin(config, main, 0, 0) != kCGErrorSuccess)
+      err = kCGErrorFailure;
+  }
+  if (err != kCGErrorSuccess) { CGCancelDisplayConfiguration(config); return NO; }
+  layoutChanged = YES;
+  if (CGCompleteDisplayConfiguration(config, kCGConfigureForAppOnly) != kCGErrorSuccess) return NO;
+  appliedTranslation = translation;
+  return YES;
 }
 
 static vd_layout_t parseLayout(const char *s) {
   if (!s) return VD_LAYOUT_EXTEND;
+  if (strcmp(s, "primary") == 0) return VD_LAYOUT_PRIMARY;
   if (strcmp(s, "mirror") == 0) return VD_LAYOUT_MIRROR;
   if (strcmp(s, "system") == 0) return VD_LAYOUT_SYSTEM;
   return VD_LAYOUT_EXTEND;
@@ -216,7 +241,7 @@ static vd_layout_t parseLayout(const char *s) {
 
 int main(int argc, const char *argv[]) {
   @autoreleasepool {
-    if (argc != 4 && argc != 5) {
+    if (argc != 4 && argc != 5 && !(argc == 6 && strcmp(argv[5], "--managed") == 0)) {
       fprintf(stdout, "0\n");
       fflush(stdout);
       return 1;
@@ -225,7 +250,7 @@ int main(int argc, const char *argv[]) {
     int width = atoi(argv[1]);
     int height = atoi(argv[2]);
     int fps = atoi(argv[3]);
-    vd_layout_t layout = parseLayout(argc == 5 ? argv[4] : NULL);
+    vd_layout_t layout = parseLayout(argc >= 5 ? argv[4] : NULL);
 
     if (width <= 0 || height <= 0 || fps <= 0) {
       fprintf(stdout, "0\n");
@@ -249,6 +274,19 @@ int main(int argc, const char *argv[]) {
     signal(SIGTERM, handle_signal);
     signal(SIGINT, handle_signal);
     signal(SIGHUP, handle_signal);
+
+    // SIGPIPE must not bypass restoration when the parent exits mid-response.
+    signal(SIGPIPE, SIG_IGN);
+    BOOL managed = argc == 6;
+    if (managed && fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK) < 0) {
+      printf("0\n");
+      fflush(stdout);
+      return 1;
+    }
+    originalOrigins = [NSMutableDictionary dictionary];
+    originalMirrors = [NSMutableDictionary dictionary];
+    originalMain = CGMainDisplayID();
+    if (!rememberDisplays()) { printf("0\n"); fflush(stdout); return 1; }
 
     // Create display directly on main thread
     CGVirtualDisplayDescriptor *desc = [[CGVirtualDisplayDescriptor alloc] init];
@@ -295,26 +333,36 @@ int main(int argc, const char *argv[]) {
       settings.modes = @[nativeMode];
     }
 
+    BOOL settingsApplied = NO;
     CGVirtualDisplay *display = [[CGVirtualDisplay alloc] initWithDescriptor:desc];
     if (!display) {
       fprintf(stderr, "[vd_helper] initWithDescriptor returned nil (trying background thread)\n");
 
       // Fallback: try on background thread
       __block CGVirtualDisplay *bgDisplay = nil;
+      __block BOOL bgApplied = NO;
       dispatch_semaphore_t sem = dispatch_semaphore_create(0);
       dispatch_async(dispatch_get_global_queue(0, 0), ^{
         bgDisplay = [[CGVirtualDisplay alloc] initWithDescriptor:desc];
-        if (bgDisplay) [bgDisplay applySettings:settings];
+        if (bgDisplay) bgApplied = [bgDisplay applySettings:settings];
         dispatch_semaphore_signal(sem);
       });
-      dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 5LL * NSEC_PER_SEC));
+      if (dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 5LL * NSEC_PER_SEC)) != 0) {
+        fprintf(stdout, "0\n");
+        fflush(stdout);
+        return 1;
+      }
       display = bgDisplay;
+      settingsApplied = bgApplied;
     } else {
-      [display applySettings:settings];
+      settingsApplied = [display applySettings:settings];
     }
 
-    if (!display || display.displayID == 0) {
+    keepAlive = display;
+    layoutChanged = display != nil;
+    if (!display || display.displayID == 0 || !settingsApplied) {
       fprintf(stderr, "[vd_helper] Failed to create virtual display\n");
+      restoreLayout();
       fprintf(stdout, "0\n");
       fflush(stdout);
       return 1;
@@ -335,9 +383,11 @@ int main(int argc, const char *argv[]) {
         err = SLSConfigureDisplayEnabled(cgConfig, resultID, true);
         fprintf(stderr, "[vd_helper] SLSConfigureDisplayEnabled(%u, true): %d\n", resultID, err);
         CGDirectDisplayID mainDisplay = CGMainDisplayID();
-        size_t mainWidth = CGDisplayPixelsWide(mainDisplay);
-        SLSConfigureDisplayOrigin(cgConfig, resultID, (int32_t)mainWidth, 0);
-        CGError completeErr = SLSCompleteDisplayConfiguration(cgConfig, kCGConfigureForSession, 0);
+        CGFloat mainWidth = CGRectGetMaxX(CGDisplayBounds(mainDisplay));
+        if (layout != VD_LAYOUT_SYSTEM)
+          SLSConfigureDisplayOrigin(cgConfig, resultID, (int32_t)mainWidth, 0);
+        layoutChanged = YES;
+        CGError completeErr = SLSCompleteDisplayConfiguration(cgConfig, kCGConfigureForAppOnly, 0);
         fprintf(stderr, "[vd_helper] SLSCompleteDisplayConfiguration: %d\n", completeErr);
       }
     }
@@ -346,22 +396,7 @@ int main(int argc, const char *argv[]) {
     usleep(500000); // 500ms
 
     // Step 2: Apply the requested layout
-    switch (layout) {
-      case VD_LAYOUT_EXTEND:
-        if (CGDisplayIsInMirrorSet(resultID) || CGDisplayMirrorsDisplay(resultID) != 0) {
-          fprintf(stderr, "[vd_helper] Mirror detected, forcing extend mode\n");
-          forceExtendMode(resultID);
-        }
-        break;
-      case VD_LAYOUT_MIRROR:
-        forceMirrorMode(resultID);
-        break;
-      case VD_LAYOUT_SYSTEM:
-        fprintf(stderr, "[vd_helper] Layout 'system': leaving mirror state as WindowServer restored it "
-                        "(inMirrorSet=%d, mirrors=%u)\n",
-                CGDisplayIsInMirrorSet(resultID), CGDisplayMirrorsDisplay(resultID));
-        break;
-    }
+    BOOL applied = applyLayout(resultID, layout, 0);
 
     // Step 3: Switch to native resolution (1x scale) mode.
     // The display starts as retina 2x (logical=half, pixel=full).
@@ -413,7 +448,7 @@ int main(int argc, const char *argv[]) {
       // Check mirror state again
       fprintf(stderr, "[vd_helper] Mirror state (retry): inMirrorSet=%d, mirrorsDisplay=%u\n",
               CGDisplayIsInMirrorSet(resultID), CGDisplayMirrorsDisplay(resultID));
-      forceExtendMode(resultID);
+      applied = applyLayout(resultID, layout, 0);
       usleep(500000);
       found = checkDisplayInList(resultID, &count);
     }
@@ -442,15 +477,43 @@ int main(int argc, const char *argv[]) {
               CGDisplayMirrorsDisplay(resultID));
     }
 
-    fprintf(stdout, "%u\n", resultID);
+    // Reapply after the 1x mode switch so placement uses the final logical bounds.
+    if (layout != VD_LAYOUT_SYSTEM) applied = applyLayout(resultID, layout, 0) && applied;
+    BOOL usable = CGDisplayIsOnline(resultID) &&
+                  (CGDisplayIsActive(resultID) || CGDisplayMirrorsDisplay(resultID));
+    fprintf(stdout, "%u\n", applied && usable ? resultID : 0);
     fflush(stdout);
+    if (!applied || !usable) shouldExit = 1;
 
-    // Keep alive via CFRunLoop
+    char command[128];
+    size_t used = 0;
     while (!shouldExit) {
-      CFRunLoopRunInMode(kCFRunLoopDefaultMode, 1.0, false);
+      if (managed) {
+        char c;
+        ssize_t n;
+        while ((n = read(STDIN_FILENO, &c, 1)) == 1) {
+          if (c == '\n') {
+            command[used] = 0;
+            char requested[16], extra;
+            unsigned int localID;
+            BOOL valid = sscanf(command, "%15s %u %c", requested, &localID, &extra) == 2 &&
+                (!strcmp(requested, "extend") || !strcmp(requested, "primary") ||
+                 !strcmp(requested, "mirror") || !strcmp(requested, "system"));
+            BOOL ok = valid && CGDisplayIsOnline(resultID) && applyLayout(resultID, parseLayout(requested), localID);
+            fprintf(stdout, "%u\n", ok ? resultID : 0);
+            fflush(stdout);
+            used = 0;
+          } else if (used < sizeof(command) - 1) command[used++] = c;
+          else { shouldExit = 1; break; }
+        }
+        if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) shouldExit = 1;
+      }
+      if (CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.1, false) == kCFRunLoopRunFinished)
+        usleep(100000);
     }
 
     fprintf(stderr, "[vd_helper] Shutting down, releasing display %u\n", resultID);
+    restoreLayout();
     keepAlive = nil;
     keepDesc = nil;
   }
