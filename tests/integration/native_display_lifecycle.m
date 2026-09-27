@@ -334,15 +334,25 @@ static void crashCase(char *executable, BOOL stoppedHelper) {
   int ready = poll(&fd, 1, 15000);
   char response[32] = {0};
   ssize_t length = ready > 0 ? read(output[0], response, sizeof(response) - 1) : -1;
-  close(output[0]);
   crashDisplay = length > 0 ? (uint32_t)strtoul(response, NULL, 10) : 0;
   require(crashDisplay != 0, "crash parent created VD");
   if (stoppedHelper) require(kill(-crashGroup, SIGSTOP) == 0, "stop owned crash subtree");
   require(kill(parent, SIGKILL) == 0, "crash owned parent");
   BOOL released = stoppedHelper || waitForRemoval(crashDisplay);
+  BOOL helperExited = stoppedHelper;
+  if (!stoppedHelper && released) {
+    // The helper retains a write end solely as an exit witness. Display removal
+    // precedes session restoration, so removal alone must not trigger SIGKILL.
+    fd.revents = 0;
+    ready = poll(&fd, 1, 10000);
+    char byte;
+    helperExited = ready > 0 && read(output[0], &byte, 1) == 0;
+  }
+  close(output[0]);
   BOOL cleaned = cleanupCrash();
   require(cleaned, "bounded crash subtree cleanup and display removal");
   require(released, "parent SIGKILL releases VD through EOF");
+  require(helperExited, "EOF helper finishes restoration and exits before forced cleanup");
 }
 
 int main(int argc, char **argv) {
@@ -354,7 +364,12 @@ int main(int argc, char **argv) {
             "test requires macOS 14 or newer");
     signal(SIGCHLD, SIG_DFL);
     if (argc == 2 && !strcmp(argv[1], "--crash-parent")) {
+      // The managed helper inherits this descriptor even though its stdout is
+      // redirected to its own reply pipe. EOF observes helper exit after ours.
+      int exitWitness = dup(STDOUT_FILENO);
+      require(exitWitness >= 0, "crash helper exit witness");
       uint32_t id = virtual_display_ensure(1280, 720, 60, "primary");
+      close(exitWitness);
       printf("%u\n", id);
       fflush(stdout);
       for (int i = 0; i < 300; ++i) usleep(100000);
@@ -442,6 +457,9 @@ int main(int argc, char **argv) {
     }
     require(!CGRectIntersectsRect(CGDisplayBounds(id), CGDisplayBounds(inserted)), "retiled extension clears new local");
     virtual_display_destroy();
+    errno = 0;
+    require(waitpid(originalHelper, NULL, WNOHANG) == -1 && errno == ECHILD,
+            "retiled helper reaped before final layout observations");
     require(virtual_display_get_id() == 0 && waitForRemoval(id), "retiled teardown releases VD");
     require(waitForMain(originalMain), "retiled teardown restores main");
     require(CGPointEqualToPoint(CGDisplayBounds(inserted).origin, restoredInserted), "retiled teardown preserves new local origin");
@@ -522,6 +540,8 @@ int main(int argc, char **argv) {
 
     crashCase(argv[0], NO);
     require(waitForMain(originalMain), "parent crash restores original main");
+    for (uint32_t i = 0; i < count; ++i)
+      require(CGPointEqualToPoint(CGDisplayBounds(displays[i]).origin, bounds[i].origin), "parent EOF preserves local origins after helper exit");
     crashCase(argv[0], YES);
     require(waitForMain(originalMain), "stopped helper teardown restores original main");
     puts("PASS: native helper reuse, layouts, mode replacement, cleanup, reap, parent crash");

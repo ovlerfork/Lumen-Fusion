@@ -7,7 +7,7 @@
  *   layout: "extend" (default), "primary", "mirror", or "system"
  * Outputs: displayID on stdout (or "0" on failure)
  * Managed stdin accepts "layout local_main_id\n" and replies with the ID or 0.
- * EOF or a termination signal releases the display after layout restoration.
+ * EOF or a termination signal releases the display, then restores local layout.
  *
  * CGVirtualDisplay creates the display object, then we:
  *   1. SLSConfigureDisplayEnabled activates it in WindowServer's display list
@@ -81,6 +81,7 @@ static CGVirtualDisplay *keepAlive = nil;
 static CGVirtualDisplayDescriptor *keepDesc = nil;
 
 static volatile sig_atomic_t shouldExit = 0;
+static BOOL traceLayouts;
 
 // Requested display layout, from argv[4].
 typedef enum {
@@ -167,7 +168,7 @@ static BOOL rememberDisplays(void) {
     origin.y -= observedTranslation.y;
     originalOrigins[@(id)] = [NSValue valueWithPoint:origin];
     originalMirrors[@(id)] = @(CGDisplayMirrorsDisplay(id));
-    fprintf(stderr, "[vd_helper] snapshot display=%u savedOrigin=(%.0f,%.0f) mirror=%u anchor=%u observedTranslation=(%.0f,%.0f) appliedTranslation=(%.0f,%.0f)\n",
+    if (traceLayouts) fprintf(stderr, "[vd_helper] snapshot display=%u savedOrigin=(%.0f,%.0f) mirror=%u anchor=%u observedTranslation=(%.0f,%.0f) appliedTranslation=(%.0f,%.0f)\n",
             id, origin.x, origin.y, originalMirrors[@(id)].unsignedIntValue,
             anchor, observedTranslation.x, observedTranslation.y,
             appliedTranslation.x, appliedTranslation.y);
@@ -201,56 +202,118 @@ static CGError configureMirror(CGDisplayConfigRef config, CGDirectDisplayID id, 
   return err;
 }
 
-static void restoreLayout(void) {
-  if (!layoutChanged) return;
-  logLayout("before restore");
-  fprintf(stderr, "[vd_helper] restore requestedMain=%u\n", originalMain);
+static BOOL restoreLayout(void) {
+  if (!layoutChanged) return YES;
+  CGDirectDisplayID displays[64];
+  uint32_t count = 0;
+  CGError err = CGGetOnlineDisplayList(64, displays, &count);
+  if (err != kCGErrorSuccess || count == 64) {
+    fprintf(stderr, "[vd_helper] Cannot enumerate surviving displays: error=%d count=%u\n", err, count);
+    return NO;
+  }
+  NSMutableSet<NSNumber *> *online = [NSMutableSet set];
+  for (uint32_t i = 0; i < count; ++i) [online addObject:@(displays[i])];
+  NSMutableDictionary<NSNumber *, NSNumber *> *mirrors = [NSMutableDictionary dictionary];
+  CGDirectDisplayID main = 0;
+  for (uint32_t i = 0; i < count; ++i) {
+    CGDirectDisplayID id = displays[i];
+    if (!originalOrigins[@(id)]) continue;
+    CGDirectDisplayID mirror = originalMirrors[@(id)].unsignedIntValue;
+    if (![online containsObject:@(mirror)]) mirror = 0;
+    mirrors[@(id)] = @(mirror);
+    if (!mirror && (!main || id == originalMain)) main = id;
+  }
+  if (!main) return YES; // No saved, independent local survives.
+  NSPoint anchor = originalOrigins[@(main)].pointValue;
+  fprintf(stderr, "[vd_helper] restore scope=session savedMain=%u requestedMain=%u\n", originalMain, main);
   CGDisplayConfigRef config = NULL;
-  CGError err = CGBeginDisplayConfiguration(&config);
+  err = CGBeginDisplayConfiguration(&config);
   if (err != kCGErrorSuccess) {
     fprintf(stderr, "[vd_helper] Could not begin layout restoration: %d\n", err);
-    return;
+    return NO;
   }
-  CGFloat destinationRight = 0;
-  if (keepAlive && CGDisplayIsOnline(keepAlive.displayID) &&
-      configureMirror(config, keepAlive.displayID, kCGNullDirectDisplay) != kCGErrorSuccess)
-    err = kCGErrorFailure;
-  for (NSNumber *key in originalOrigins) {
+  for (NSNumber *key in mirrors) {
     CGDirectDisplayID id = key.unsignedIntValue;
-    if (!CGDisplayIsOnline(id)) continue;
-    NSPoint origin = id == originalMain ? NSZeroPoint : originalOrigins[key].pointValue;
-    destinationRight = MAX(destinationRight, origin.x + CGDisplayBounds(id).size.width);
-    CGDirectDisplayID mirror = originalMirrors[key].unsignedIntValue;
-    if (mirror && !CGDisplayIsOnline(mirror)) mirror = 0;
+    CGDirectDisplayID mirror = mirrors[key].unsignedIntValue;
+    NSPoint origin = originalOrigins[key].pointValue;
+    origin.x -= anchor.x;
+    origin.y -= anchor.y;
     fprintf(stderr, "[vd_helper] restore request display=%u origin=(%.0f,%.0f) mirror=%u\n",
             id, origin.x, origin.y, mirror);
     if (configureMirror(config, id, mirror) != kCGErrorSuccess) err = kCGErrorFailure;
-    if (configureOrigin(config, id, (int32_t)origin.x, (int32_t)origin.y) != kCGErrorSuccess) err = kCGErrorFailure;
-  }
-  if (keepAlive && CGDisplayIsOnline(keepAlive.displayID)) {
-    // Park beyond every local's destination, not its currently translated bounds.
-    fprintf(stderr, "[vd_helper] restore request display=%u origin=(%.0f,0) mirror=0\n",
-            keepAlive.displayID, destinationRight);
-    if (configureOrigin(config, keepAlive.displayID, (int32_t)destinationRight, 0) != kCGErrorSuccess)
+    if (id != main && configureOrigin(config, id, (int32_t)origin.x, (int32_t)origin.y) != kCGErrorSuccess)
       err = kCGErrorFailure;
   }
-  if (err == kCGErrorSuccess) err = CGCompleteDisplayConfiguration(config, kCGConfigureForAppOnly);
+  if (configureOrigin(config, main, 0, 0) != kCGErrorSuccess) err = kCGErrorFailure;
+  // App-only changes roll back at helper exit. Restore just the surviving
+  // locals for this login session, after our display has actually disappeared.
+  if (err == kCGErrorSuccess) err = CGCompleteDisplayConfiguration(config, kCGConfigureForSession);
   else {
     CGError cancelErr = CGCancelDisplayConfiguration(config);
     if (cancelErr != kCGErrorSuccess)
       fprintf(stderr, "[vd_helper] Could not cancel layout restoration: %d\n", cancelErr);
   }
-  if (err != kCGErrorSuccess) fprintf(stderr, "[vd_helper] Could not restore display layout: %d\n", err);
-  logLayout("after restore completion");
+  fprintf(stderr, "[vd_helper] restore scope=session completion=%d requestedMain=%u\n", err, main);
+  CGDirectDisplayID active[64];
+  uint32_t activeCount = 0;
+  CGError listErr = CGGetActiveDisplayList(64, active, &activeCount);
+  BOOL restored = err == kCGErrorSuccess && listErr == kCGErrorSuccess &&
+                  activeCount > 0 && activeCount < 64 && active[0] == main;
+  for (NSNumber *key in mirrors) {
+    NSPoint origin = originalOrigins[key].pointValue;
+    origin.x -= anchor.x;
+    origin.y -= anchor.y;
+    if (!CGPointEqualToPoint(CGDisplayBounds(key.unsignedIntValue).origin, NSPointToCGPoint(origin)) ||
+        CGDisplayMirrorsDisplay(key.unsignedIntValue) != mirrors[key].unsignedIntValue)
+      restored = NO;
+  }
+  logLayout("after session restore completion");
+  if (!restored)
+    fprintf(stderr, "[vd_helper] Session restoration not observed: requestedMain=%u listError=%d\n", main, listErr);
+  return restored;
+}
+
+static BOOL releaseDisplayAndRestore(void) {
+  if (!keepAlive && !layoutChanged) return YES;
+  CGDirectDisplayID id = keepAlive.displayID;
+  // Capture locals plugged in since the last layout command while the old
+  // coordinate frame and our virtual display still exist.
+  if (id && !rememberDisplays())
+    fprintf(stderr, "[vd_helper] Could not snapshot locals before release\n");
+  logLayout("before virtual display release");
+  @autoreleasepool {
+    keepAlive = nil;
+    keepDesc = nil;
+  }
+  // Stay within the parent's existing two-second graceful shutdown budget.
+  // A complete online list includes mirror slaves; scalar flags can be stale.
+  BOOL removed = !id;
+  for (int attempt = 0; !removed && attempt < 20; ++attempt) {
+    CGDirectDisplayID displays[64];
+    uint32_t count = 0;
+    if (CGGetOnlineDisplayList(64, displays, &count) == kCGErrorSuccess && count < 64) {
+      removed = YES;
+      for (uint32_t i = 0; i < count; ++i) if (displays[i] == id) removed = NO;
+    }
+    if (!removed && CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.05, false) == kCFRunLoopRunFinished)
+      usleep(50000);
+  }
+  fprintf(stderr, "[vd_helper] release display=%u removed=%d\n", id, removed);
+  logLayout("after virtual display release");
+  if (!removed) {
+    fprintf(stderr, "[vd_helper] Refusing session restoration while virtual display %u remains online\n", id);
+    return NO;
+  }
+  return restoreLayout();
 }
 
 static BOOL applyLayout(CGDirectDisplayID virtualID, vd_layout_t layout, CGDirectDisplayID preferred) {
   if (layout == VD_LAYOUT_SYSTEM) return YES;
-  logLayout("before layout");
+  if (traceLayouts) logLayout("before layout");
   if (!rememberDisplays()) return NO;
   CGDirectDisplayID main = localMain(virtualID, preferred);
   const char *name = layout == VD_LAYOUT_PRIMARY ? "primary" : layout == VD_LAYOUT_MIRROR ? "mirror" : "extend";
-  fprintf(stderr, "[vd_helper] layout=%s virtual=%u preferred=%u local=%u requestedMain=%u\n",
+  if (traceLayouts) fprintf(stderr, "[vd_helper] layout=%s virtual=%u preferred=%u local=%u requestedMain=%u\n",
           name, virtualID, preferred, main, layout == VD_LAYOUT_PRIMARY ? virtualID : main);
   if (layout == VD_LAYOUT_MIRROR && !main) return YES; // No local master in a headless session.
   CGDisplayConfigRef config = NULL;
@@ -259,7 +322,7 @@ static BOOL applyLayout(CGDirectDisplayID virtualID, vd_layout_t layout, CGDirec
     fprintf(stderr, "[vd_helper] layout=%s begin failed: %d\n", name, beginErr);
     return NO;
   }
-  fprintf(stderr, "[vd_helper] request virtual=%u mirror=%u\n",
+  if (traceLayouts) fprintf(stderr, "[vd_helper] request virtual=%u mirror=%u\n",
           virtualID, layout == VD_LAYOUT_MIRROR ? main : kCGNullDirectDisplay);
   CGError err = configureMirror(config, virtualID,
       layout == VD_LAYOUT_MIRROR ? main : kCGNullDirectDisplay);
@@ -269,7 +332,7 @@ static BOOL applyLayout(CGDirectDisplayID virtualID, vd_layout_t layout, CGDirec
     for (NSNumber *key in originalOrigins) {
       CGDirectDisplayID id = key.unsignedIntValue;
       if (CGDisplayIsOnline(id) && CGDisplayMirrorsDisplay(id) == virtualID) {
-        fprintf(stderr, "[vd_helper] request display=%u mirror=0\n", id);
+        if (traceLayouts) fprintf(stderr, "[vd_helper] request display=%u mirror=0\n", id);
         if (configureMirror(config, id, kCGNullDirectDisplay) != kCGErrorSuccess)
           err = kCGErrorFailure;
       }
@@ -290,19 +353,19 @@ static BOOL applyLayout(CGDirectDisplayID virtualID, vd_layout_t layout, CGDirec
       origin.x += translation.x;
       origin.y += translation.y;
       right = MAX(right, origin.x + CGDisplayBounds(id).size.width);
-      fprintf(stderr, "[vd_helper] request display=%u origin=(%.0f,%.0f) savedOrigin=(%.0f,%.0f)\n",
+      if (traceLayouts) fprintf(stderr, "[vd_helper] request display=%u origin=(%.0f,%.0f) savedOrigin=(%.0f,%.0f)\n",
               id, origin.x, origin.y, originalOrigins[key].pointValue.x, originalOrigins[key].pointValue.y);
       if (configureOrigin(config, id, (int32_t)origin.x,
                           (int32_t)origin.y) != kCGErrorSuccess) err = kCGErrorFailure;
     }
     if (layout != VD_LAYOUT_MIRROR) {
-      fprintf(stderr, "[vd_helper] request virtual=%u origin=(%.0f,0)\n",
+      if (traceLayouts) fprintf(stderr, "[vd_helper] request virtual=%u origin=(%.0f,0)\n",
               virtualID, layout == VD_LAYOUT_PRIMARY ? 0.0 : right);
       if (configureOrigin(config, virtualID, layout == VD_LAYOUT_PRIMARY ? 0 : (int32_t)right, 0) != kCGErrorSuccess)
         err = kCGErrorFailure;
     }
     if (layout != VD_LAYOUT_PRIMARY && main) {
-      fprintf(stderr, "[vd_helper] request main=%u origin=(0,0) last\n", main);
+      if (traceLayouts) fprintf(stderr, "[vd_helper] request main=%u origin=(0,0) last\n", main);
       if (configureOrigin(config, main, 0, 0) != kCGErrorSuccess) err = kCGErrorFailure;
     }
   }
@@ -315,10 +378,18 @@ static BOOL applyLayout(CGDirectDisplayID virtualID, vd_layout_t layout, CGDirec
   }
   layoutChanged = YES;
   err = CGCompleteDisplayConfiguration(config, kCGConfigureForAppOnly);
-  fprintf(stderr, "[vd_helper] layout=%s completion=%d requestedMain=%u observedMain=%u\n",
-          name, err, layout == VD_LAYOUT_PRIMARY ? virtualID : main, CGMainDisplayID());
+  CGDirectDisplayID active[64];
+  uint32_t count = 0;
+  CGError listErr = CGGetActiveDisplayList(64, active, &count);
+  CGDirectDisplayID requestedMain = layout == VD_LAYOUT_PRIMARY ? virtualID : main;
+  CGDirectDisplayID observedMain = listErr == kCGErrorSuccess && count ? active[0] : 0;
   if (err == kCGErrorSuccess) appliedTranslation = translation;
-  logLayout("after layout completion");
+  if (traceLayouts || err != kCGErrorSuccess || listErr != kCGErrorSuccess ||
+      count == 64 || (requestedMain && observedMain != requestedMain)) {
+    fprintf(stderr, "[vd_helper] layout=%s scope=app-only completion=%d listError=%d requestedMain=%u observedMain=%u\n",
+            name, err, listErr, requestedMain, observedMain);
+    logLayout("after layout completion");
+  }
   if (err != kCGErrorSuccess) return NO;
   return YES;
 }
@@ -331,8 +402,10 @@ static vd_layout_t parseLayout(const char *s) {
   return VD_LAYOUT_EXTEND;
 }
 
-int main(int argc, const char *argv[]) {
+static int runHelper(int argc, const char *argv[]) {
   @autoreleasepool {
+    const char *trace = getenv("SUNSHINE_VD_TRACE_LAYOUT");
+    traceLayouts = trace && !strcmp(trace, "1");
     if (argc != 4 && argc != 5 && !(argc == 6 && strcmp(argv[5], "--managed") == 0)) {
       fprintf(stdout, "0\n");
       fflush(stdout);
@@ -454,7 +527,6 @@ int main(int argc, const char *argv[]) {
     layoutChanged = display != nil;
     if (!display || display.displayID == 0 || !settingsApplied) {
       fprintf(stderr, "[vd_helper] Failed to create virtual display\n");
-      restoreLayout();
       fprintf(stdout, "0\n");
       fflush(stdout);
       return 1;
@@ -548,8 +620,8 @@ int main(int argc, const char *argv[]) {
     fprintf(stderr, "[vd_helper] Display %u (%dx%d@%dHz) - %s in active list (%u total)\n",
             resultID, width, height, fps, found ? "FOUND" : "NOT found", count);
 
-    // Log all active displays for debugging
-    {
+    // Detailed startup observations are opt-in.
+    if (traceLayouts) {
       CGDirectDisplayID activeDisplays[32];
       uint32_t dCount = 0;
       CGGetActiveDisplayList(32, activeDisplays, &dCount);
@@ -604,13 +676,20 @@ int main(int argc, const char *argv[]) {
       }
       if (CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.1, false) == kCFRunLoopRunFinished)
         usleep(100000);
-      if (handledLayout) logLayout("after command run loop");
+      if (traceLayouts && handledLayout) logLayout("after command run loop");
     }
 
     fprintf(stderr, "[vd_helper] Shutting down, releasing display %u\n", resultID);
-    restoreLayout();
-    keepAlive = nil;
-    keepDesc = nil;
   }
   return 0;
+}
+
+int main(int argc, const char *argv[]) {
+  // Drain creation/command autoreleases and local strong references before
+  // clearing the final owner and waiting for WindowServer to remove the VD.
+  int result = runHelper(argc, argv);
+  @autoreleasepool {
+    if (!releaseDisplayAndRestore()) return 1;
+  }
+  return result;
 }
