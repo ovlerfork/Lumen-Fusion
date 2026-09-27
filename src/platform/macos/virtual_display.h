@@ -37,9 +37,10 @@ uint32_t virtual_display_ensure(int width, int height, int fps, const char *layo
  * local_main_id selects an online active local main for extend/mirror; 0 selects
  * the original main when available, then another active local display.
  * Accepts extend/primary/mirror/system. System makes no arrangement changes.
- * Returns 1 after helper acknowledgement, 0 on failure. A transport timeout
- * stops the helper; a rejected layout leaves it available for retry.
- * Original available display origins/main are restored before helper teardown.
+ * Returns 1 after helper acknowledgement, 0 on failure. An uncertain reply
+ * preserves helper ownership; any pending reply is drained before a new command.
+ * Original available display origins/main are restored after releasing the VD,
+ * before the helper exits, only when this helper changed their arrangement.
  * Calls are serialized; create/ensure/destroy may block for bounded IPC/stop.
  */
 int virtual_display_apply_layout(const char *layout, uint32_t local_main_id);

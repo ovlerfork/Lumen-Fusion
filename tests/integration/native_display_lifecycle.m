@@ -18,9 +18,21 @@
 pid_t native_test_waitpid(pid_t, int *, int);
 boolean_t native_test_display_online(CGDirectDisplayID);
 boolean_t native_test_display_active(CGDirectDisplayID);
+CGError native_test_online_list(uint32_t, CGDirectDisplayID *, uint32_t *);
+CGError native_test_active_list(uint32_t, CGDirectDisplayID *, uint32_t *);
+CGDirectDisplayID native_test_mirror(CGDirectDisplayID);
+ssize_t native_test_read(int, void *, size_t);
+ssize_t native_test_write(int, const void *, size_t);
+int native_test_poll(struct pollfd *, nfds_t, int);
 #define waitpid native_test_waitpid
 #define CGDisplayIsOnline native_test_display_online
 #define CGDisplayIsActive native_test_display_active
+#define CGGetOnlineDisplayList native_test_online_list
+#define CGGetActiveDisplayList native_test_active_list
+#define CGDisplayMirrorsDisplay native_test_mirror
+#define read native_test_read
+#define write native_test_write
+#define poll native_test_poll
 #include "virtual_display.m"
 #else
 extern char **environ;
@@ -31,23 +43,82 @@ static pid_t observedHelper;
 static CGDirectDisplayID unavailableID;
 static BOOL offlineObservation, inactiveObservation;
 static BOOL failNextOnlineObservation;
+static CGDirectDisplayID lastReplyID, staleMaster;
+static BOOL splitNextReply, delayedReply, malformedNextReply;
+static int replyTimeouts, commandWrites, unlistedCreationObservations;
+static unsigned long replyValue;
+
 pid_t native_test_waitpid(pid_t pid, int *status, int options) {
   if (pid > 0) observedHelper = pid;
   if (interruptedWait) { --interruptedWait; errno = EINTR; return -1; }
   return waitpid(pid, status, options);
 }
 boolean_t native_test_display_online(CGDirectDisplayID id) {
-  if (failNextOnlineObservation) {
-    failNextOnlineObservation = NO;
-    unavailableID = id;
-    fprintf(stderr, "[native_display_lifecycle] inject offline after acknowledgement display=%u helper=%d\n",
-            id, observedHelper);
-    return false;
-  }
-  return id == unavailableID && offlineObservation ? false : CGDisplayIsOnline(id);
+  if (id == staleMaster || (id == unavailableID && offlineObservation)) return true;
+  return CGDisplayIsOnline(id);
 }
 boolean_t native_test_display_active(CGDirectDisplayID id) {
-  return id == unavailableID && inactiveObservation ? false : CGDisplayIsActive(id);
+  if (id == staleMaster || (id == unavailableID && inactiveObservation)) return true;
+  return CGDisplayIsActive(id);
+}
+static void omitDisplay(CGDirectDisplayID *ids, uint32_t *count, CGDirectDisplayID id) {
+  for (uint32_t i = 0; i < *count; ++i) {
+    if (ids[i] != id) continue;
+    memmove(ids + i, ids + i + 1, (*count - i - 1) * sizeof(*ids));
+    --*count;
+    return;
+  }
+}
+CGError native_test_online_list(uint32_t capacity, CGDirectDisplayID *ids, uint32_t *count) {
+  CGError err = CGGetOnlineDisplayList(capacity, ids, count);
+  if (failNextOnlineObservation) {
+    failNextOnlineObservation = NO;
+    offlineObservation = YES;
+    unavailableID = lastReplyID;
+    fprintf(stderr, "[native_display_lifecycle] inject unlisted creation display=%u helper=%d\n",
+            unavailableID, observedHelper);
+  }
+  if (err == kCGErrorSuccess && offlineObservation) omitDisplay(ids, count, unavailableID);
+  if (err == kCGErrorSuccess && unlistedCreationObservations > 0) {
+    --unlistedCreationObservations;
+    omitDisplay(ids, count, lastReplyID);
+  }
+  return err;
+}
+CGError native_test_active_list(uint32_t capacity, CGDirectDisplayID *ids, uint32_t *count) {
+  CGError err = CGGetActiveDisplayList(capacity, ids, count);
+  if (err == kCGErrorSuccess && (offlineObservation || inactiveObservation)) omitDisplay(ids, count, unavailableID);
+  return err;
+}
+CGDirectDisplayID native_test_mirror(CGDirectDisplayID id) {
+  return staleMaster && id == unavailableID ? staleMaster : CGDisplayMirrorsDisplay(id);
+}
+ssize_t native_test_read(int fd, void *buffer, size_t size) {
+  ssize_t n = read(fd, buffer, size);
+  if (n == 1) {
+    char *c = buffer;
+    if (*c == '\n') {
+      lastReplyID = (uint32_t)replyValue;
+      replyValue = 0;
+      delayedReply = NO;
+    } else if (*c >= '0' && *c <= '9') replyValue = replyValue * 10 + *c - '0';
+    if (splitNextReply) { splitNextReply = NO; delayedReply = YES; }
+    if (malformedNextReply) { malformedNextReply = NO; *c = 'x'; }
+  }
+  return n;
+}
+ssize_t native_test_write(int fd, const void *buffer, size_t size) {
+  ++commandWrites;
+  return write(fd, buffer, size);
+}
+int native_test_poll(struct pollfd *fds, nfds_t count, int timeout) {
+  // Delay delivery after a real helper reply's first byte. The remaining bytes
+  // stay in the native pipe, across two separate bounded command attempts.
+  if (delayedReply && replyTimeouts > 0) {
+    --replyTimeouts;
+    return poll(NULL, 0, timeout);
+  }
+  return poll(fds, count, timeout);
 }
 
 // A distinct native display exercises hotplug and right-side multi-monitor layout.
@@ -78,6 +149,7 @@ boolean_t native_test_display_active(CGDirectDisplayID id) {
 - (BOOL)applySettings:(CGVirtualDisplaySettings *)settings;
 @end
 static CGVirtualDisplay *localFixture;
+static unsigned int fixtureSerial;
 static pid_t crashGroup;
 static BOOL crashSignalsSent;
 static CGDirectDisplayID crashDisplay;
@@ -134,6 +206,8 @@ static void require(BOOL condition, const char *message) {
     logDisplays("failure before cleanup");
     interruptedWait = 0;
     failNextOnlineObservation = NO;
+    replyTimeouts = 0;
+    staleMaster = 0;
     offlineObservation = inactiveObservation = NO;
     cleanupCrash();
     virtual_display_destroy();
@@ -248,7 +322,7 @@ static CGDirectDisplayID addLocalDisplay(CGPoint origin, BOOL insertBeforeLocals
   descriptor.name = @"Native lifecycle local fixture";
   descriptor.vendorID = 0xF0F0;
   descriptor.productID = 0x5679;
-  descriptor.serialNum = (unsigned int)getpid();
+  descriptor.serialNum = (unsigned int)getpid() + fixtureSerial++;
   // Wider than the 1280px VD so parking at the translated main edge also
   // intersects this local display when restoring from primary.
   descriptor.maxPixelsWide = 1600;
@@ -392,6 +466,7 @@ int main(int argc, char **argv) {
     failNextOnlineObservation = YES;
     uint32_t failedCreation = virtual_display_ensure(1280, 720, 60, "primary");
     CGDirectDisplayID failedDisplay = unavailableID;
+    offlineObservation = NO;
     require(failedCreation == 0 && !failNextOnlineObservation && unavailableID != 0,
             "acknowledged fresh creation fails visibility");
     require(observedHelper > 0, "fresh creation observed helper");
@@ -423,6 +498,24 @@ int main(int argc, char **argv) {
       offlineObservation = inactiveObservation = NO;
       require(virtual_display_ensure(1280, 720, 60, "primary") == id && observedHelper == originalHelper, "retry resumes same helper and display");
     }
+    splitNextReply = YES;
+    replyTimeouts = 2;
+    int writesBeforeDelay = commandWrites;
+    require(!virtual_display_apply_layout("extend", originalMain), "partial acknowledgement times out");
+    require(delayedReply && virtual_display_get_id() == id && observedHelper == originalHelper,
+            "acknowledgement timeout retains live helper and VD");
+    require(waitForMain(originalMain), "timed-out command actually applied extension");
+    require(!virtual_display_apply_layout("primary", 0), "outstanding reply keeps retry bounded");
+    require(commandWrites == writesBeforeDelay + 1 && virtual_display_get_id() == id,
+            "pending acknowledgement prevents another command without releasing VD");
+    require(virtual_display_apply_layout("primary", 0) && waitForMain(id), "late partial reply drained before primary recovery");
+    require(!delayedReply && virtual_display_get_id() == id && observedHelper == originalHelper,
+            "delayed acknowledgement recovery retains same helper and VD");
+    malformedNextReply = YES;
+    require(!virtual_display_apply_layout("extend", originalMain), "malformed acknowledgement is uncertain");
+    require(virtual_display_get_id() == id && waitForMain(originalMain), "malformed acknowledgement retains applied desktop");
+    require(virtual_display_apply_layout("primary", 0) && observedHelper == originalHelper,
+            "malformed complete reply permits recovery on same helper");
     require(waitForMain(id), "primary ready before retiled hotplug");
     CGPoint beforeRetile = CGDisplayBounds(originalMain).origin;
     CGRect beforeRetileBounds[64];
@@ -527,8 +620,20 @@ int main(int argc, char **argv) {
 
     id = virtual_display_create(1280, 720, 60, "extend");
     require(id != 0, "legacy create");
+    // Populate the parent's old mode cache before the helper replaces its VD.
+    CGDisplayModeRef oldMode = CGDisplayCopyDisplayMode(id);
+    require(oldMode && CGDisplayModeGetPixelWidth(oldMode) == 1280 && CGDisplayModeGetPixelHeight(oldMode) == 720,
+            "mode replacement starts with observed old pixels");
+    CGDisplayModeRelease(oldMode);
+    pid_t oldHelper = observedHelper;
+    // The parent can briefly enumerate a topology without the new helper's ID.
+    unlistedCreationObservations = 2;
     uint32_t changed = virtual_display_ensure(1440, 900, 60, "extend");
-    require(changed != 0, "changed mode recreates");
+    require(changed != 0 && observedHelper != oldHelper, "changed mode recreates");
+    require(unlistedCreationObservations == 0, "replacement waits through stale parent enumeration");
+    errno = 0;
+    require(waitpid(oldHelper, NULL, WNOHANG) == -1 && errno == ECHILD, "mode replacement reaps old helper");
+    require(virtual_display_get_target_id() == changed, "replacement is listed and capturable before returning");
     CGDisplayModeRef mode = CGDisplayCopyDisplayMode(changed);
     require(mode && CGDisplayModeGetPixelWidth(mode) == 1440 && CGDisplayModeGetPixelHeight(mode) == 900,
             "changed mode uses requested pixels");
@@ -544,7 +649,100 @@ int main(int argc, char **argv) {
       require(CGPointEqualToPoint(CGDisplayBounds(displays[i]).origin, bounds[i].origin), "parent EOF preserves local origins after helper exit");
     crashCase(argv[0], YES);
     require(waitForMain(originalMain), "stopped helper teardown restores original main");
-    puts("PASS: native helper reuse, layouts, mode replacement, cleanup, reap, parent crash");
+
+    id = virtual_display_create(1280, 720, 60, "primary");
+    require(id != 0 && waitForMain(id), "primary for local replacement");
+    pid_t replacementHelper = observedHelper;
+    right = 0;
+    for (uint32_t i = 0; i < count; ++i) right = MAX(right, CGRectGetMaxX(CGDisplayBounds(displays[i])));
+    CGDirectDisplayID retiredLocal = addLocalDisplay(CGPointMake(right, 0), NO);
+    require(virtual_display_apply_layout("primary", retiredLocal) && waitForMain(id), "helper remembers local before removal");
+    localFixture = nil;
+    require(waitForRemoval(retiredLocal), "remembered local removed");
+    unavailableID = id;
+    staleMaster = retiredLocal;
+    require(native_test_display_online(retiredLocal) && native_test_display_active(retiredLocal),
+            "removed master retains injected stale scalar flags");
+    require(virtual_display_get_target_id() == 0 && virtual_display_get_id() == id,
+            "removed stale mirror master is not a target and does not release owned VD");
+    staleMaster = 0;
+    require(virtual_display_get_target_id() == id, "fresh target recovers after stale master observation");
+    require(waitForMain(id), "primary remains after local removal");
+    translation = CGDisplayBounds(originalMain).origin;
+    right = 0;
+    for (uint32_t i = 0; i < count; ++i) right = MAX(right, CGRectGetMaxX(CGDisplayBounds(displays[i])));
+    CGDirectDisplayID replacement = addLocalDisplay(CGPointMake(right, translation.y), NO);
+    require(replacement != retiredLocal, "replacement has distinct native identity");
+    CGPoint replacementOrigin = CGPointMake(right - translation.x, 0);
+    require(virtual_display_apply_layout("extend", retiredLocal), "removed preferred local is skipped");
+    require(waitForMain(originalMain), "listed local becomes main after removal");
+    require(virtual_display_get_id() == id && observedHelper == replacementHelper, "local replacement retains helper and VD");
+    require(CGPointEqualToPoint(CGDisplayBounds(replacement).origin, replacementOrigin), "listed replacement keeps normalized origin");
+    require(!CGRectIntersectsRect(CGDisplayBounds(id), CGDisplayBounds(replacement)), "extension clears listed replacement");
+    for (uint32_t i = 0; i < count; ++i) {
+      require(CGPointEqualToPoint(CGDisplayBounds(displays[i]).origin, bounds[i].origin), "local removal preserves remaining origins");
+      require(!CGRectIntersectsRect(CGDisplayBounds(id), CGDisplayBounds(displays[i])), "local removal leaves VD clear of locals");
+    }
+    virtual_display_destroy();
+    require(waitForRemoval(id) && waitForMain(originalMain), "replacement session cleanup");
+
+    // Keep two locals online so an arrangement change in a system-only session
+    // is observable after the helper exits and its own display disappears.
+    id = virtual_display_create(1280, 720, 60, "system");
+    require(id != 0, "system-only session created");
+    pid_t systemHelper = observedHelper;
+    CGDirectDisplayID userDisplays[64];
+    CGRect userBounds[64];
+    for (uint32_t i = 0; i < count; ++i) userDisplays[i] = displays[i];
+    userDisplays[count] = replacement;
+    userDisplays[count + 1] = id;
+    require(waitForDisplays(userDisplays, count + 2, NO), "system-only topology enumerated");
+    CGFloat userLeft = CGDisplayBounds(displays[0]).origin.x;
+    for (uint32_t i = 0; i < count; ++i) {
+      userBounds[i] = CGDisplayBounds(displays[i]);
+      userLeft = MIN(userLeft, userBounds[i].origin.x);
+    }
+    CGFloat userOffset = CGDisplayBounds(replacement).size.width - userLeft;
+    CGDisplayConfigRef userConfig;
+    CGError userErr = CGBeginDisplayConfiguration(&userConfig);
+    fprintf(stderr, "[native_display_lifecycle] user arrangement begin error=%d\n", userErr);
+    require(userErr == kCGErrorSuccess, "user arrangement begin");
+    for (uint32_t i = 0; i < count + 2 && userErr == kCGErrorSuccess; ++i) {
+      if (!CGDisplayMirrorsDisplay(userDisplays[i])) continue;
+      userErr = CGConfigureDisplayMirrorOfDisplay(userConfig, userDisplays[i], kCGNullDirectDisplay);
+      fprintf(stderr, "[native_display_lifecycle] user unmirror display=%u error=%d\n", userDisplays[i], userErr);
+    }
+    CGFloat userRight = 0;
+    for (uint32_t i = 0; i < count && userErr == kCGErrorSuccess; ++i) {
+      userBounds[i].origin.x += userOffset;
+      userRight = MAX(userRight, CGRectGetMaxX(userBounds[i]));
+      userErr = fixtureOrigin(userConfig, displays[i], userBounds[i].origin);
+    }
+    if (userErr == kCGErrorSuccess) userErr = fixtureOrigin(userConfig, id, CGPointMake(userRight, 0));
+    if (userErr == kCGErrorSuccess) userErr = fixtureOrigin(userConfig, replacement, CGPointZero);
+    if (userErr == kCGErrorSuccess) userErr = CGCompleteDisplayConfiguration(userConfig, kCGConfigureForSession);
+    else {
+      CGError cancelErr = CGCancelDisplayConfiguration(userConfig);
+      fprintf(stderr, "[native_display_lifecycle] user arrangement cancel error=%d\n", cancelErr);
+    }
+    fprintf(stderr, "[native_display_lifecycle] user arrangement scope=session completion=%d\n", userErr);
+    require(userErr == kCGErrorSuccess && waitForMain(replacement), "user selects a different local main during system-only session");
+    require(waitForDisplays(userDisplays, count + 2, YES), "user arrangement active");
+    for (uint32_t i = 0; i < count; ++i)
+      require(CGPointEqualToPoint(CGDisplayBounds(displays[i]).origin, userBounds[i].origin), "user arrangement has exact requested local origins");
+    virtual_display_destroy();
+    errno = 0;
+    require(waitpid(systemHelper, NULL, WNOHANG) == -1 && errno == ECHILD, "system-only helper reaped");
+    require(virtual_display_get_id() == 0 && waitForRemoval(id), "system-only VD released");
+    require(waitForMain(replacement), "system-only cleanup preserves user-selected main");
+    for (uint32_t i = 0; i < count; ++i) {
+      require(CGPointEqualToPoint(CGDisplayBounds(displays[i]).origin, userBounds[i].origin), "system-only cleanup preserves user origins");
+      require(!CGRectIntersectsRect(CGDisplayBounds(replacement), CGDisplayBounds(displays[i])), "system-only cleanup preserves nonoverlap");
+    }
+    localFixture = nil;
+    require(waitForRemoval(replacement), "replacement fixture released");
+    require(waitForMain(originalMain), "original main remains after fixture cleanup");
+    puts("PASS: native helper reuse, layouts, mode replacement, cleanup, reap, parent crash, local replacement, system-only arrangement");
   }
   return 0;
 }

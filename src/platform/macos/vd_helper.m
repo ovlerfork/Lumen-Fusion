@@ -139,20 +139,42 @@ static void logLayout(const char *phase) {
   }
 }
 
-static BOOL rememberDisplays(void) {
-  CGDirectDisplayID displays[64];
-  CGDirectDisplayID active[64];
-  uint32_t count = 0;
-  uint32_t activeCount = 0;
-  if (CGGetOnlineDisplayList(64, displays, &count) != kCGErrorSuccess || count == 64 ||
-      CGGetActiveDisplayList(64, active, &activeCount) != kCGErrorSuccess || activeCount == 64)
+typedef struct {
+  CGDirectDisplayID online[64], active[64];
+  uint32_t onlineCount, activeCount;
+} DisplayLists;
+
+static BOOL listedDisplay(const CGDirectDisplayID *ids, uint32_t count, CGDirectDisplayID id) {
+  for (uint32_t i = 0; i < count; ++i) if (ids[i] == id) return YES;
+  return NO;
+}
+
+static BOOL readDisplayLists(DisplayLists *lists) {
+  lists->onlineCount = lists->activeCount = 0;
+  CGError onlineErr = CGGetOnlineDisplayList(64, lists->online, &lists->onlineCount);
+  CGError activeErr = CGGetActiveDisplayList(64, lists->active, &lists->activeCount);
+  if (onlineErr != kCGErrorSuccess || activeErr != kCGErrorSuccess ||
+      lists->onlineCount >= 64 || lists->activeCount >= 64) {
+    fprintf(stderr, "[vd_helper] Display observation incomplete: onlineError=%d count=%u activeError=%d count=%u\n",
+            onlineErr, lists->onlineCount, activeErr, lists->activeCount);
     return NO;
+  }
+  for (uint32_t i = 0; i < lists->activeCount; ++i) {
+    if (!listedDisplay(lists->online, lists->onlineCount, lists->active[i])) {
+      fprintf(stderr, "[vd_helper] Display observation changed during enumeration: active=%u missing online\n", lists->active[i]);
+      return NO;
+    }
+  }
+  return YES;
+}
+
+static void rememberDisplays(const DisplayLists *lists) {
   // Registration can insert a new display before existing locals. Recover the
   // current coordinate frame from a saved local, not our last requested offset.
   CGDirectDisplayID anchor = 0;
-  for (uint32_t i = 0; i < activeCount; ++i) {
-    if (active[i] == keepAlive.displayID || !originalOrigins[@(active[i])]) continue;
-    if (!anchor || active[i] == originalMain) anchor = active[i];
+  for (uint32_t i = 0; i < lists->activeCount; ++i) {
+    if (lists->active[i] == keepAlive.displayID || !originalOrigins[@(lists->active[i])]) continue;
+    if (!anchor || lists->active[i] == originalMain) anchor = lists->active[i];
   }
   NSPoint observedTranslation = appliedTranslation;
   if (anchor) {
@@ -160,8 +182,8 @@ static BOOL rememberDisplays(void) {
     NSPoint saved = originalOrigins[@(anchor)].pointValue;
     observedTranslation = NSMakePoint(current.x - saved.x, current.y - saved.y);
   }
-  for (uint32_t i = 0; i < count; ++i) {
-    CGDirectDisplayID id = displays[i];
+  for (uint32_t i = 0; i < lists->onlineCount; ++i) {
+    CGDirectDisplayID id = lists->online[i];
     if (id == keepAlive.displayID || originalOrigins[@(id)]) continue;
     NSPoint origin = NSPointFromCGPoint(CGDisplayBounds(id).origin);
     origin.x -= observedTranslation.x;
@@ -173,17 +195,16 @@ static BOOL rememberDisplays(void) {
             anchor, observedTranslation.x, observedTranslation.y,
             appliedTranslation.x, appliedTranslation.y);
   }
-  return YES;
 }
 
-static CGDirectDisplayID localMain(CGDirectDisplayID virtualID, CGDirectDisplayID preferred) {
-  if (preferred && preferred != virtualID && CGDisplayIsOnline(preferred) && CGDisplayIsActive(preferred))
+static CGDirectDisplayID localMain(const DisplayLists *lists, CGDirectDisplayID virtualID, CGDirectDisplayID preferred) {
+  if (preferred && preferred != virtualID && listedDisplay(lists->active, lists->activeCount, preferred))
     return preferred;
-  if (originalMain && originalMain != virtualID && CGDisplayIsOnline(originalMain) && CGDisplayIsActive(originalMain))
+  if (originalMain && originalMain != virtualID && listedDisplay(lists->active, lists->activeCount, originalMain))
     return originalMain;
-  for (NSNumber *key in originalOrigins) {
-    CGDirectDisplayID id = key.unsignedIntValue;
-    if (id != virtualID && CGDisplayIsOnline(id) && CGDisplayIsActive(id)) return id;
+  for (uint32_t i = 0; i < lists->activeCount; ++i) {
+    CGDirectDisplayID id = lists->active[i];
+    if (id != virtualID) return id;
   }
   return 0;
 }
@@ -278,8 +299,11 @@ static BOOL releaseDisplayAndRestore(void) {
   CGDirectDisplayID id = keepAlive.displayID;
   // Capture locals plugged in since the last layout command while the old
   // coordinate frame and our virtual display still exist.
-  if (id && !rememberDisplays())
-    fprintf(stderr, "[vd_helper] Could not snapshot locals before release\n");
+  if (id && layoutChanged) {
+    DisplayLists lists;
+    if (readDisplayLists(&lists)) rememberDisplays(&lists);
+    else fprintf(stderr, "[vd_helper] Could not snapshot locals before release\n");
+  }
   logLayout("before virtual display release");
   @autoreleasepool {
     keepAlive = nil;
@@ -308,10 +332,12 @@ static BOOL releaseDisplayAndRestore(void) {
 }
 
 static BOOL applyLayout(CGDirectDisplayID virtualID, vd_layout_t layout, CGDirectDisplayID preferred) {
+  DisplayLists lists;
+  if (!readDisplayLists(&lists) || !listedDisplay(lists.online, lists.onlineCount, virtualID)) return NO;
   if (layout == VD_LAYOUT_SYSTEM) return YES;
   if (traceLayouts) logLayout("before layout");
-  if (!rememberDisplays()) return NO;
-  CGDirectDisplayID main = localMain(virtualID, preferred);
+  rememberDisplays(&lists);
+  CGDirectDisplayID main = localMain(&lists, virtualID, preferred);
   const char *name = layout == VD_LAYOUT_PRIMARY ? "primary" : layout == VD_LAYOUT_MIRROR ? "mirror" : "extend";
   if (traceLayouts) fprintf(stderr, "[vd_helper] layout=%s virtual=%u preferred=%u local=%u requestedMain=%u\n",
           name, virtualID, preferred, main, layout == VD_LAYOUT_PRIMARY ? virtualID : main);
@@ -329,9 +355,9 @@ static BOOL applyLayout(CGDirectDisplayID virtualID, vd_layout_t layout, CGDirec
   NSPoint translation = appliedTranslation;
   {
     // Unmirror local displays that WindowServer attached to our VD.
-    for (NSNumber *key in originalOrigins) {
-      CGDirectDisplayID id = key.unsignedIntValue;
-      if (CGDisplayIsOnline(id) && CGDisplayMirrorsDisplay(id) == virtualID) {
+    for (uint32_t i = 0; i < lists.onlineCount; ++i) {
+      CGDirectDisplayID id = lists.online[i];
+      if (id != virtualID && CGDisplayMirrorsDisplay(id) == virtualID) {
         if (traceLayouts) fprintf(stderr, "[vd_helper] request display=%u mirror=0\n", id);
         if (configureMirror(config, id, kCGNullDirectDisplay) != kCGErrorSuccess)
           err = kCGErrorFailure;
@@ -339,16 +365,17 @@ static BOOL applyLayout(CGDirectDisplayID virtualID, vd_layout_t layout, CGDirec
     }
     NSPoint anchor = main ? originalOrigins[@(main)].pointValue : NSZeroPoint;
     CGFloat left = anchor.x;
-    for (NSNumber *key in originalOrigins) {
-      if (CGDisplayIsOnline(key.unsignedIntValue))
-        left = MIN(left, originalOrigins[key].pointValue.x);
+    for (uint32_t i = 0; i < lists.onlineCount; ++i) {
+      if (lists.online[i] != virtualID)
+        left = MIN(left, originalOrigins[@(lists.online[i])].pointValue.x);
     }
     CGFloat offset = layout == VD_LAYOUT_PRIMARY ? CGDisplayBounds(virtualID).size.width + anchor.x - left : 0;
     translation = NSMakePoint(offset - anchor.x, -anchor.y);
     CGFloat right = 0;
-    for (NSNumber *key in originalOrigins) {
-      CGDirectDisplayID id = key.unsignedIntValue;
-      if (!CGDisplayIsOnline(id)) continue;
+    for (uint32_t i = 0; i < lists.onlineCount; ++i) {
+      CGDirectDisplayID id = lists.online[i];
+      if (id == virtualID) continue;
+      NSNumber *key = @(id);
       NSPoint origin = originalOrigins[key].pointValue;
       origin.x += translation.x;
       origin.y += translation.y;
@@ -376,21 +403,23 @@ static BOOL applyLayout(CGDirectDisplayID virtualID, vd_layout_t layout, CGDirec
       fprintf(stderr, "[vd_helper] layout=%s cancel failed: %d\n", name, cancelErr);
     return NO;
   }
-  layoutChanged = YES;
   err = CGCompleteDisplayConfiguration(config, kCGConfigureForAppOnly);
   CGDirectDisplayID active[64];
   uint32_t count = 0;
   CGError listErr = CGGetActiveDisplayList(64, active, &count);
   CGDirectDisplayID requestedMain = layout == VD_LAYOUT_PRIMARY ? virtualID : main;
   CGDirectDisplayID observedMain = listErr == kCGErrorSuccess && count ? active[0] : 0;
-  if (err == kCGErrorSuccess) appliedTranslation = translation;
+  if (err == kCGErrorSuccess) {
+    layoutChanged = YES;
+    appliedTranslation = translation;
+  }
   if (traceLayouts || err != kCGErrorSuccess || listErr != kCGErrorSuccess ||
-      count == 64 || (requestedMain && observedMain != requestedMain)) {
+      count >= 64 || (requestedMain && observedMain != requestedMain)) {
     fprintf(stderr, "[vd_helper] layout=%s scope=app-only completion=%d listError=%d requestedMain=%u observedMain=%u\n",
             name, err, listErr, requestedMain, observedMain);
     logLayout("after layout completion");
   }
-  if (err != kCGErrorSuccess) return NO;
+  if (err != kCGErrorSuccess || listErr != kCGErrorSuccess || count >= 64) return NO;
   return YES;
 }
 
@@ -450,8 +479,10 @@ static int runHelper(int argc, const char *argv[]) {
     }
     originalOrigins = [NSMutableDictionary dictionary];
     originalMirrors = [NSMutableDictionary dictionary];
-    originalMain = CGMainDisplayID();
-    if (!rememberDisplays()) { printf("0\n"); fflush(stdout); return 1; }
+    DisplayLists initialLists;
+    if (!readDisplayLists(&initialLists)) { printf("0\n"); fflush(stdout); return 1; }
+    originalMain = initialLists.activeCount ? initialLists.active[0] : 0;
+    rememberDisplays(&initialLists);
 
     // Create display directly on main thread
     CGVirtualDisplayDescriptor *desc = [[CGVirtualDisplayDescriptor alloc] init];
@@ -524,7 +555,6 @@ static int runHelper(int argc, const char *argv[]) {
     }
 
     keepAlive = display;
-    layoutChanged = display != nil;
     if (!display || display.displayID == 0 || !settingsApplied) {
       fprintf(stderr, "[vd_helper] Failed to create virtual display\n");
       fprintf(stdout, "0\n");
@@ -548,10 +578,14 @@ static int runHelper(int argc, const char *argv[]) {
         fprintf(stderr, "[vd_helper] SLSConfigureDisplayEnabled(%u, true): %d\n", resultID, err);
         CGDirectDisplayID mainDisplay = CGMainDisplayID();
         CGFloat mainWidth = CGRectGetMaxX(CGDisplayBounds(mainDisplay));
-        if (layout != VD_LAYOUT_SYSTEM)
-          SLSConfigureDisplayOrigin(cgConfig, resultID, (int32_t)mainWidth, 0);
-        layoutChanged = YES;
+        BOOL positioned = NO;
+        if (layout != VD_LAYOUT_SYSTEM) {
+          CGError originErr = SLSConfigureDisplayOrigin(cgConfig, resultID, (int32_t)mainWidth, 0);
+          if (originErr == kCGErrorSuccess) positioned = YES;
+          else fprintf(stderr, "[vd_helper] Initial origin failed display=%u error=%d\n", resultID, originErr);
+        }
         CGError completeErr = SLSCompleteDisplayConfiguration(cgConfig, kCGConfigureForAppOnly, 0);
+        if (positioned && completeErr == kCGErrorSuccess) layoutChanged = YES;
         fprintf(stderr, "[vd_helper] SLSCompleteDisplayConfiguration: %d\n", completeErr);
       }
     }
@@ -643,8 +677,17 @@ static int runHelper(int argc, const char *argv[]) {
 
     // Reapply after the 1x mode switch so placement uses the final logical bounds.
     if (layout != VD_LAYOUT_SYSTEM) applied = applyLayout(resultID, layout, 0) && applied;
-    BOOL usable = CGDisplayIsOnline(resultID) &&
-                  (CGDisplayIsActive(resultID) || CGDisplayMirrorsDisplay(resultID));
+    DisplayLists readyLists;
+    BOOL complete = readDisplayLists(&readyLists);
+    CGDirectDisplayID master = complete ? CGDisplayMirrorsDisplay(resultID) : 0;
+    BOOL usable = complete && listedDisplay(readyLists.online, readyLists.onlineCount, resultID) &&
+                  listedDisplay(readyLists.active, readyLists.activeCount, master ? master : resultID);
+    CGDisplayModeRef observedMode = usable ? CGDisplayCopyDisplayMode(resultID) : NULL;
+    fprintf(stderr, "[vd_helper] Ready display=%u usable=%d requestedPixels=%dx%d observedPixels=%zux%zu master=%u\n",
+            resultID, usable, width, height,
+            observedMode ? CGDisplayModeGetPixelWidth(observedMode) : 0,
+            observedMode ? CGDisplayModeGetPixelHeight(observedMode) : 0, master);
+    if (observedMode) CGDisplayModeRelease(observedMode);
     fprintf(stdout, "%u\n", applied && usable ? resultID : 0);
     fflush(stdout);
     if (!applied || !usable) shouldExit = 1;
@@ -664,7 +707,7 @@ static int runHelper(int argc, const char *argv[]) {
             BOOL valid = sscanf(command, "%15s %u %c", requested, &localID, &extra) == 2 &&
                 (!strcmp(requested, "extend") || !strcmp(requested, "primary") ||
                  !strcmp(requested, "mirror") || !strcmp(requested, "system"));
-            BOOL ok = valid && CGDisplayIsOnline(resultID) && applyLayout(resultID, parseLayout(requested), localID);
+            BOOL ok = valid && applyLayout(resultID, parseLayout(requested), localID);
             handledLayout = valid;
             fprintf(stdout, "%u\n", ok ? resultID : 0);
             fflush(stdout);
