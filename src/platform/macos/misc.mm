@@ -374,6 +374,8 @@ namespace platf {
       }
     }
 
+    adaptive_display::streaming_power(streaming_display_sleep_assertion != kIOPMNullAssertionID);
+
     // Managed virtual desktops already provide the capture target. Waking a
     // sleeping local screen here would change the topology that selected the
     // headless role. Legacy physical-display capture still needs its wake step.
@@ -388,6 +390,7 @@ namespace platf {
     }
 
     std::lock_guard lock {streaming_power_assertion_mutex};
+    adaptive_display::streaming_power(false);
     release_power_assertion(streaming_user_activity_assertion, "remote-user activity"sv);
     release_power_assertion(streaming_display_sleep_assertion, "display-sleep prevention"sv);
     BOOST_LOG(info) << "Released macOS streaming power assertions"sv;

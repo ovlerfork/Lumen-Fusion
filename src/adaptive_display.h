@@ -61,9 +61,11 @@ namespace adaptive_display {
     std::function<topology(uint32_t)> inspect;
     std::function<uint32_t(mode, const char *)> ensure;
     std::function<bool(const char *, uint32_t)> layout;
+    // Ownership survives temporary target invisibility; readiness only gates admission.
     std::function<bool(uint32_t)> healthy;
     std::function<void()> destroy;
     std::function<void(const std::string &)> retention_power;
+    std::function<bool(uint32_t)> ready;
   };
 
   class controller {
@@ -76,6 +78,8 @@ namespace adaptive_display {
     bool valid(token owner);
     bool activate(token owner);
     void established(token owner);
+    // Acquire streaming protection before true; notify false before releasing it.
+    void streaming_power(bool protected_by_stream);
     void finish(token owner, clock::time_point now = clock::now());
     void abort(token owner, clock::time_point now = clock::now());
     void revoke(uint64_t epoch = 0);
@@ -91,7 +95,7 @@ namespace adaptive_display {
     bool matches(token t) const;
     topology inspect();
     topology observe(clock::time_point now);
-    bool may_retain(const topology &t) const;
+    bool may_retain() const;
     void update_retention_power(const topology &t);
     void settle(bool disconnected, clock::time_point now);
     void destroy();
@@ -100,12 +104,12 @@ namespace adaptive_display {
     std::map<uint64_t, owner> owners;
     uint64_t epoch = 0, next_attempt = 0;
     bool revoked = true, closed = false, paused = false;
-    bool successful_disconnect = false, retained = false, helper_failed = false;
+    bool retained = false, helper_failed = false, streaming_protected = false;
     uint32_t display = 0;
     policy rules;
     presence role = presence::unknown;
     uint32_t local_main = 0, candidate_main = 0;
-    std::optional<clock::time_point> candidate_since, deadline;
+    std::optional<clock::time_point> candidate_since, deadline, last_disconnect;
   };
 
   // Runtime binding; unmanaged layouts receive an empty token.
@@ -114,6 +118,7 @@ namespace adaptive_display {
   bool valid(token owner);
   bool activate(token owner);
   void established(token owner);
+  void streaming_power(bool protected_by_stream);
   void finish(token owner);
   void abort(token owner);
   void revoke(uint64_t epoch = 0);

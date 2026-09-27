@@ -56,3 +56,35 @@ namespace rtsp_stream {
     EXPECT_FALSE(launch->aborted.load());
   }
 }  // namespace rtsp_stream
+
+namespace rtsp_stream {
+  TEST(RtspOwnership, DuplicateAdmissionPreservesStartedLaunch) {
+    rtsp_server_t server;
+    launch_session_t launch {};
+    launch.desktop = {7, 1};
+    launch.started = true;
+    // The admission boundary also checks duplicates that passed ANNOUNCE's
+    // initial pending check before another request claimed the launch.
+    EXPECT_FALSE(server.start_session({}, launch, "127.0.0.1"));
+    EXPECT_TRUE(launch.started.load());
+    EXPECT_FALSE(launch.aborted.load());
+    EXPECT_EQ(launch.desktop.epoch, 7u);
+    EXPECT_EQ(launch.desktop.attempt, 1u);
+    EXPECT_EQ(server.session_count(), 0);
+  }
+
+  TEST(RtspOwnership, ShutdownAdmissionCleansOnlyTheClaimedAttempt) {
+    rtsp_server_t server;
+    auto shutdown = mail::man->event<bool>(mail::shutdown);
+    shutdown->raise(true);
+    auto restore = util::fail_guard([&] { shutdown->try_pop(); });
+    launch_session_t original {}, pending {};
+    original.started = true;
+    EXPECT_FALSE(server.start_session({}, original, "127.0.0.1"));
+    EXPECT_FALSE(original.aborted.load());
+    EXPECT_FALSE(server.start_session({}, pending, "127.0.0.1"));
+    EXPECT_TRUE(pending.aborted.load());
+    EXPECT_TRUE(pending.started.load());
+    EXPECT_EQ(server.session_count(), 0);
+  }
+}  // namespace rtsp_stream

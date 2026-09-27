@@ -135,6 +135,13 @@ namespace adaptive_display {
     }
 #endif
   }
+  void streaming_power(bool protected_by_stream) {
+#ifdef __APPLE__
+    if (enabled()) {
+      state().desktop.streaming_power(protected_by_stream);
+    }
+#endif
+  }
   void finish(token t) {
 #ifdef __APPLE__
     if (t) {

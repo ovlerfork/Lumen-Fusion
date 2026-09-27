@@ -9,7 +9,7 @@ namespace {
   protected:
     topology detected {presence::absent, 0, power_source::external};
     uint32_t resource = 0, next_id = 10;
-    bool helper_ok = true, create_ok = true, layout_ok = true;
+    bool helper_ok = true, create_ok = true, layout_ok = true, target_ready = true;
     std::string arrangement, power = "none";
     mode actual {};
     controller desktop {{
@@ -31,7 +31,8 @@ namespace {
       },
       [this](uint32_t id) { return helper_ok && resource && resource == id; },
       [this] { resource = 0; },
-      [this](const std::string &kind) { power = kind; }
+      [this](const std::string &kind) { power = kind; },
+      [this](uint32_t id) { return target_ready && resource == id; }
     }};
     controller::clock::time_point now {};
     policy rules;
@@ -339,4 +340,152 @@ TEST_F(AdaptiveDesktop, PresentOverrideSelectsExtensionAndNonePowerRetainsWithou
   EXPECT_EQ(arrangement, "extend");
   EXPECT_EQ(power, "none");
   EXPECT_TRUE(desktop.snapshot().paused);
+}
+
+TEST_F(AdaptiveDesktop, FailedPendingOwnerDoesNotMoveEstablishedDisconnectDeadline) {
+  auto a = connect();
+  auto b = prepare(false);
+  const auto id = resource;
+  desktop.finish(a, now + 10s);
+  EXPECT_EQ(power, "display");
+  desktop.abort(b, now + 500s);
+  EXPECT_EQ(resource, id);
+  EXPECT_EQ(desktop.snapshot().deadline, now + 610s);
+  desktop.reconcile(now + 610s);
+  EXPECT_EQ(resource, 0);
+}
+
+TEST_F(AdaptiveDesktop, FailedActiveHandshakeCannotReplenishElapsedPendingBudget) {
+  auto a = connect();
+  auto b = prepare(false);
+  ASSERT_TRUE(desktop.activate(b));
+  desktop.finish(a, now + 10s);
+  desktop.reconcile(now + 700s);
+  EXPECT_NE(resource, 0); // The unfinished owner pins the desktop.
+  desktop.finish(b, now + 700s);
+  EXPECT_EQ(resource, 0);
+}
+
+TEST_F(AdaptiveDesktop, ResumePowerSurvivesPreparationAndFailedStreamingAssertion) {
+  const auto id = pause();
+  auto t = prepare(false);
+  ASSERT_TRUE(t);
+  EXPECT_EQ(power, "display");
+  ASSERT_TRUE(desktop.activate(t));
+  desktop.streaming_power(false); // Native streaming assertion acquisition failed.
+  EXPECT_EQ(power, "display");
+  desktop.finish(t, now + 10s);
+  EXPECT_EQ(resource, id);
+  EXPECT_EQ(power, "display");
+  EXPECT_EQ(desktop.snapshot().deadline, now + 600s);
+
+  t = prepare(false);
+  ASSERT_TRUE(desktop.activate(t));
+  desktop.streaming_power(true);
+  EXPECT_EQ(power, "none");
+  desktop.established(t);
+  auto pending = prepare(false);
+  desktop.finish(t, now + 20s);
+  desktop.streaming_power(false); // Called before the last streaming assertion is released.
+  EXPECT_EQ(power, "display");
+  desktop.abort(pending, now + 30s);
+  EXPECT_EQ(power, "display");
+  EXPECT_EQ(desktop.snapshot().deadline, now + 620s);
+}
+
+TEST_F(AdaptiveDesktop, PendingResumePowerTracksBatteryPolicy) {
+  rules.on_battery = true;
+  rules.power = "system";
+  pause();
+  auto t = prepare(false);
+  detected.power = power_source::battery;
+  desktop.reconcile(now + 1s);
+  EXPECT_EQ(power, "system");
+  detected.power = power_source::unknown;
+  desktop.reconcile(now + 2s);
+  EXPECT_EQ(power, "none");
+  detected.power = power_source::external;
+  desktop.abort(t, now + 3s);
+  EXPECT_EQ(power, "system");
+
+  desktop.revoke();
+  rules.on_battery = false;
+  pause();
+  t = prepare(false);
+  detected.power = power_source::battery;
+  desktop.reconcile(now + 4s);
+  EXPECT_EQ(power, "none");
+  desktop.abort(t, now + 5s);
+  EXPECT_EQ(power, "none");
+}
+
+TEST_F(AdaptiveDesktop, TemporaryTargetLossPreservesPausedAndActiveOwnership) {
+  const auto id = pause();
+  const auto deadline = desktop.snapshot().deadline;
+  target_ready = false;
+  desktop.reconcile(now + 1s);
+  EXPECT_EQ(resource, id);
+  EXPECT_EQ(desktop.snapshot().deadline, deadline);
+  EXPECT_EQ(power, "display");
+  EXPECT_FALSE(prepare(false));
+  EXPECT_TRUE(desktop.snapshot().paused);
+  target_ready = true;
+  auto t = prepare(false);
+  ASSERT_TRUE(t);
+  target_ready = false;
+  EXPECT_FALSE(desktop.activate(t));
+  EXPECT_TRUE(desktop.valid(t));
+  target_ready = true;
+  ASSERT_TRUE(desktop.activate(t));
+  desktop.established(t);
+  target_ready = false;
+  desktop.reconcile(now + 2s);
+  EXPECT_TRUE(desktop.valid(t));
+  EXPECT_TRUE(desktop.snapshot().revoked_owners.empty());
+  desktop.finish(t, now + 3s);
+  EXPECT_EQ(resource, id);
+  target_ready = true;
+  EXPECT_TRUE(prepare(false));
+  EXPECT_EQ(resource, id);
+}
+
+TEST_F(AdaptiveDesktop, FailedRoleTransitionCannotAuthorizeLocalRemoval) {
+  const auto id = pause();
+  detected.local = presence::present;
+  detected.local_main = 1;
+  layout_ok = false;
+  desktop.reconcile(now);
+  desktop.reconcile(now + 2s);
+  EXPECT_EQ(resource, id);
+  EXPECT_EQ(desktop.snapshot().role, presence::absent);
+  auto t = prepare(false);
+  desktop.abort(t, now + 3s);
+  EXPECT_EQ(resource, id);
+  layout_ok = true;
+  desktop.reconcile(now + 4s);
+  EXPECT_EQ(resource, 0);
+}
+
+TEST_F(AdaptiveDesktop, FailedLayoutDoesNotBlockExpiryCancelOrConfirmedDeath) {
+  for (int reason = 0; reason < 3; ++reason) {
+    detected.local = presence::absent;
+    layout_ok = helper_ok = true;
+    ASSERT_NE(pause(), 0);
+    detected.local = presence::present;
+    detected.local_main = 1;
+    layout_ok = false;
+    desktop.reconcile(now);
+    desktop.reconcile(now + 2s);
+    ASSERT_NE(resource, 0);
+    if (reason == 0) {
+      desktop.reconcile(now + 600s);
+    } else if (reason == 1) {
+      desktop.revoke();
+    } else {
+      helper_ok = false;
+      desktop.reconcile(now + 3s);
+    }
+    EXPECT_EQ(resource, 0);
+    EXPECT_EQ(power, "none");
+  }
 }

@@ -636,9 +636,22 @@ namespace rtsp_stream {
 
     bool start_session(const std::shared_ptr<stream::session_t> &stream_session,
                        launch_session_t &launch, const std::string &address) {
+      if (launch.aborted || launch.started.exchange(true)) {
+        return false;
+      }
+      bool activated = false;
+      // Declared before the slot guard so native cleanup runs after its unlock.
+      auto cleanup = util::fail_guard([&] {
+        launch.aborted = true;
+        if (activated) {
+          adaptive_display::finish(launch.desktop);
+        } else {
+          adaptive_display::abort(launch.desktop);
+        }
+      });
       auto lg = _session_slots.lock();
-      if (launch.aborted || launch.started.exchange(true) ||
-          mail::man->event<bool>(mail::shutdown)->peek() || !adaptive_display::activate(launch.desktop)) {
+      if (launch.aborted || mail::man->event<bool>(mail::shutdown)->peek() ||
+          !(activated = adaptive_display::activate(launch.desktop))) {
         return false;
       }
       // Publishing the slot and starting it are one operation relative to
@@ -648,6 +661,7 @@ namespace rtsp_stream {
         _session_slots->erase(stream_session);
         return false;
       }
+      cleanup.disable();
       return true;
     }
 
@@ -1209,8 +1223,6 @@ namespace rtsp_stream {
       BOOST_LOG(error) << "Failed to start a streaming session"sv;
 
       stream_session.reset();
-      adaptive_display::finish(session.desktop);
-      session.aborted = true;
       respond(sock, session, &option, 500, "Internal Server Error", req->sequenceNumber, {});
       return;
     }
