@@ -106,6 +106,7 @@
     "working_dir_desc": "应传递给进程的工作目录。例如，某些应用程序使用工作目录搜索配置文件。如果不设置，Lumina 将默认使用命令的父目录"
   },
   "config": {
+    "virtual_display_retention_seconds_error": "请输入 0 到 2147483647 的整数保留秒数。默认值为 600，即 10 分钟；0 表示保留直到明确退出应用。此字段不能为空。",
     "virtual_display": "虚拟显示器（仅 macOS）",
     "virtual_display_desc": "按需创建用于串流的虚拟显示器。默认禁用。",
     "virtual_display_layout": "虚拟显示器布局（仅 macOS）",

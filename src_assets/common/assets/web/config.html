@@ -81,6 +81,9 @@
 
         <!-- Tab content -->
         <div class="config-content">
+          <div class="alert alert-danger mb-4" role="alert" v-if="retentionError">
+            {{ $t(retentionError) }}
+          </div>
           <div class="alert alert-success mb-4" v-if="saved && !restarted">
             <b>{{ $t('_common.success') }}</b> {{ $t('config.apply_note') }}
           </div>
@@ -201,6 +204,7 @@
       return {
         platform: "",
         saved: false,
+        retentionError: "",
         restarted: false,
         config: null,
         currentTab: "general",
@@ -492,8 +496,18 @@
         this.saved = false;
         this.restarted = false;
 
+        this.retentionError = "";
+        const retention = this.config.virtual_display_retention_seconds;
+        const seconds = Number(retention);
+        if ((typeof retention !== "number" && (typeof retention !== "string" || !/^-?\d+$/.test(retention))) ||
+            !Number.isInteger(seconds) || seconds < 0 || seconds > 2147483647) {
+          this.retentionError = "config.virtual_display_retention_seconds_error";
+          return Promise.resolve(false);
+        }
+
         // create a temp copy of this.config to use for the post request
         let config = this.serialize();
+        config.virtual_display_retention_seconds = seconds;
 
         // delete default values from this.config
         this.tabs.forEach(tab => {
