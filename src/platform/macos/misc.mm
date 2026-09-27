@@ -369,10 +369,12 @@ namespace platf {
       }
     }
 
-    // A display-sleep assertion keeps an active display awake, but does not
-    // power on a display that is already asleep. Declare remote user activity
-    // as well so a new Moonlight connection can recover the capture pipeline.
-    declare_remote_user_activity();
+    // Managed virtual desktops already provide the capture target. Waking a
+    // sleeping local screen here would change the topology that selected the
+    // headless role. Legacy physical-display capture still needs its wake step.
+    if (!adaptive_display::enabled()) {
+      declare_remote_user_activity();
+    }
   }
 
   void streaming_will_stop() {
