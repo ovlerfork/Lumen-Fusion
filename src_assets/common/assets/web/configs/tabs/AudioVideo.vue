@@ -80,12 +80,62 @@ const config = ref(props.config)
         <div class="mb-3" v-if="config.virtual_display === 'enabled'">
           <label for="virtual_display_layout" class="form-label">{{ $t('config.virtual_display_layout') }}</label>
           <select class="form-select" id="virtual_display_layout" v-model="config.virtual_display_layout">
-            <option value="extend">Extend</option>
-            <option value="mirror">Mirror</option>
-            <option value="system">Use system setting</option>
+            <option value="extend">{{ $t('config.virtual_display_layout_extend') }}</option>
+            <option value="mirror">{{ $t('config.virtual_display_layout_mirror') }}</option>
+            <option value="system">{{ $t('config.virtual_display_layout_system') }}</option>
+            <option value="adaptive">{{ $t('config.virtual_display_layout_adaptive') }}</option>
+            <option value="primary">{{ $t('config.virtual_display_layout_primary') }}</option>
           </select>
           <div class="form-text">{{ $t('config.virtual_display_layout_desc') }}</div>
         </div>
+        <fieldset class="mb-3" v-if="config.virtual_display === 'enabled' && config.virtual_display_layout === 'adaptive'">
+          <legend class="fs-6">{{ $t('config.virtual_display_retention') }}</legend>
+          <p class="form-text">{{ $t('config.virtual_display_retention_desc') }}</p>
+          <div class="mb-3">
+            <label for="virtual_display_local_disconnect" class="form-label">{{ $t('config.virtual_display_local_disconnect') }}</label>
+            <select class="form-select" id="virtual_display_local_disconnect" v-model="config.virtual_display_local_disconnect">
+              <option value="remove">{{ $t('config.virtual_display_remove') }}</option>
+              <option value="retain">{{ $t('config.virtual_display_retain') }}</option>
+            </select>
+          </div>
+          <div class="mb-3">
+            <label for="virtual_display_headless_disconnect" class="form-label">{{ $t('config.virtual_display_headless_disconnect') }}</label>
+            <select class="form-select" id="virtual_display_headless_disconnect" v-model="config.virtual_display_headless_disconnect">
+              <option value="retain">{{ $t('config.virtual_display_retain') }}</option>
+              <option value="remove">{{ $t('config.virtual_display_remove') }}</option>
+            </select>
+          </div>
+          <div class="mb-3">
+            <label for="virtual_display_retention_seconds" class="form-label">{{ $t('config.virtual_display_retention_seconds') }}</label>
+            <input type="number" class="form-control" id="virtual_display_retention_seconds" min="0" max="2147483647" step="1"
+                   v-model="config.virtual_display_retention_seconds" />
+            <div class="form-text">{{ $t('config.virtual_display_retention_seconds_desc') }}</div>
+          </div>
+          <div class="mb-3">
+            <label for="virtual_display_retention_power" class="form-label">{{ $t('config.virtual_display_retention_power') }}</label>
+            <select class="form-select" id="virtual_display_retention_power" v-model="config.virtual_display_retention_power">
+              <option value="display">{{ $t('config.virtual_display_retention_power_display') }}</option>
+              <option value="system">{{ $t('config.virtual_display_retention_power_system') }}</option>
+              <option value="none">{{ $t('config.virtual_display_retention_power_none') }}</option>
+            </select>
+            <div class="form-text">{{ $t('config.virtual_display_retention_power_desc') }}</div>
+          </div>
+          <Checkbox class="mb-3"
+                    id="virtual_display_retention_on_battery"
+                    locale-prefix="config"
+                    v-model="config.virtual_display_retention_on_battery"
+                    default="false"
+          ></Checkbox>
+          <div class="mb-3">
+            <label for="virtual_display_local_override" class="form-label">{{ $t('config.virtual_display_local_override') }}</label>
+            <select class="form-select" id="virtual_display_local_override" v-model="config.virtual_display_local_override">
+              <option value="auto">{{ $t('config.virtual_display_local_override_auto') }}</option>
+              <option value="present">{{ $t('config.virtual_display_local_override_present') }}</option>
+              <option value="absent">{{ $t('config.virtual_display_local_override_absent') }}</option>
+            </select>
+            <div class="form-text">{{ $t('config.virtual_display_local_override_desc') }}</div>
+          </div>
+        </fieldset>
       </template>
     </PlatformLayout>
 
