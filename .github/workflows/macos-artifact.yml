@@ -47,6 +47,12 @@ jobs:
           # but exclude the two Sunshine documentation-consistency checks that require it.
           mkdir -p "$DIAGNOSTICS"
           ./test_sunshine --gtest_output="xml:$DIAGNOSTICS/gtest.xml" --gtest_filter=-ConfigConsistencyTest.AllConfigOptionsExistInAllFiles:ConfigConsistencyTest.ConfigTabsMatchDocumentationSections 2>&1 | tee "$DIAGNOSTICS/gtest.log"
+      - name: Test configuration save
+        run: |
+          mkdir -p "$DIAGNOSTICS"
+          node --test tests/unit/test_config_save.mjs 2>&1 | tee "$DIAGNOSTICS/config-save.log"
+      - name: Validate native virtual display lifecycle
+        run: bash scripts/validate-macos-virtual-display.sh build-macos-zip/vd_helper
       - name: Package
         run: |
           bash scripts/macos_build.sh --step=zip
@@ -92,6 +98,8 @@ jobs:
           path: |
             ${{ env.DIAGNOSTICS }}/gtest.log
             ${{ env.DIAGNOSTICS }}/gtest.xml
+            ${{ env.DIAGNOSTICS }}/config-save.log
+            ${{ env.DIAGNOSTICS }}/virtual-display/native-display-lifecycle.log
             ${{ env.DIAGNOSTICS }}/login-item/login-item.log
           if-no-files-found: warn
       - name: Upload failure diagnostics
