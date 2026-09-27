@@ -3,6 +3,7 @@
 #include "globals.h"
 #include "logging.h"
 #include "process.h"
+#include "rtsp.h"
 
 #include <condition_variable>
 #include <thread>
@@ -39,8 +40,8 @@ namespace adaptive_display {
                 proc::proc.running();
                 desktop.reconcile();
                 const auto current = desktop.snapshot();
-                if (current.revoked && current.active) {
-                  mail::man->event<bool>(mail::broadcast_shutdown)->raise(true);
+                for (const auto owner : current.revoked_owners) {
+                  rtsp_stream::stop_by_desktop_owner(owner);
                 }
               }
               lock.lock();

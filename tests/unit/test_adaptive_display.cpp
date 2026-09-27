@@ -105,15 +105,42 @@ TEST_F(AdaptiveDesktop, UnknownInitialTopologyRequiresOverrideButPreservesRetain
   EXPECT_EQ(arrangement, "primary");
 }
 
-TEST_F(AdaptiveDesktop, BatteryOptInAndUnknownPowerNeverGrantIndefiniteRetention) {
+TEST_F(AdaptiveDesktop, PowerChangesOnlyReconcileIdleAssertions) {
+  const auto id = pause();
+  const auto deadline = desktop.snapshot().deadline;
+  ASSERT_NE(id, 0);
+  EXPECT_EQ(power, "display");
+  for (const auto source : {power_source::battery, power_source::unknown, power_source::external}) {
+    detected.power = source;
+    desktop.reconcile(now + 1s);
+    EXPECT_EQ(resource, id);
+    EXPECT_EQ(desktop.snapshot().deadline, deadline);
+    EXPECT_TRUE(desktop.snapshot().paused);
+    EXPECT_EQ(power, source == power_source::external ? "display" : "none");
+  }
   detected.power = power_source::battery;
-  EXPECT_EQ(pause(), 0);
+  desktop.reconcile(now + 600s);
+  EXPECT_EQ(resource, 0);
+  EXPECT_EQ(power, "none");
+}
+
+TEST_F(AdaptiveDesktop, BatteryOptInControlsPowerAndUnknownPowerRetainsPassively) {
+  detected.power = power_source::battery;
+  ASSERT_NE(pause(), 0);
+  EXPECT_EQ(power, "none");
   rules.on_battery = true;
-  EXPECT_NE(pause(), 0);
-  desktop.revoke();
+  rules.power = "system";
+  ASSERT_NE(pause(), 0);
+  EXPECT_EQ(power, "system");
   rules.retention = 0s;
   detected.power = power_source::unknown;
-  EXPECT_EQ(pause(), 0);
+  const auto id = pause();
+  ASSERT_NE(id, 0);
+  EXPECT_EQ(power, "none");
+  EXPECT_FALSE(desktop.snapshot().deadline);
+  desktop.reconcile(now + 10000s);
+  EXPECT_EQ(resource, id);
+  EXPECT_EQ(power, "none");
 }
 
 TEST_F(AdaptiveDesktop, FailedInitialPreparationAndHandshakeReleaseResource) {
@@ -184,6 +211,10 @@ TEST_F(AdaptiveDesktop, CancelRevokesBeforeDrainAndLateJoinCannotRetain) {
   auto b = prepare(false);
   auto id = resource;
   desktop.revoke();
+  const auto revoked = desktop.snapshot().revoked_owners;
+  ASSERT_EQ(revoked.size(), 1);
+  EXPECT_EQ(revoked.front().epoch, a.epoch);
+  EXPECT_EQ(revoked.front().attempt, a.attempt);
   EXPECT_FALSE(desktop.activate(b));
   EXPECT_FALSE(prepare(false));
   EXPECT_EQ(resource, id); // Media owner has not drained yet.
@@ -193,6 +224,7 @@ TEST_F(AdaptiveDesktop, CancelRevokesBeforeDrainAndLateJoinCannotRetain) {
   EXPECT_FALSE(desktop.snapshot().paused);
   auto next = prepare();
   ASSERT_TRUE(next);
+  ASSERT_TRUE(desktop.activate(next));
   desktop.revoke(a.epoch); // Old process cleanup cannot revoke the next app.
   EXPECT_TRUE(desktop.valid(next));
 }
@@ -247,15 +279,9 @@ TEST_F(AdaptiveDesktop, LocalReturnChangesActiveRoleWithoutDestroyingDesktop) {
   EXPECT_EQ(resource, 0);
 }
 
-TEST_F(AdaptiveDesktop, HelperLossAndPowerDisallowReleasePausedResources) {
+TEST_F(AdaptiveDesktop, HelperLossReleasesPausedResources) {
   pause();
   helper_ok = false;
-  desktop.reconcile(now);
-  EXPECT_EQ(resource, 0);
-  EXPECT_EQ(power, "none");
-  helper_ok = true;
-  pause();
-  detected.power = power_source::battery;
   desktop.reconcile(now);
   EXPECT_EQ(resource, 0);
   EXPECT_EQ(power, "none");
@@ -308,6 +334,7 @@ TEST_F(AdaptiveDesktop, PresentOverrideSelectsExtensionAndNonePowerRetainsWithou
   rules.override_local = presence::present;
   rules.local_retain = true;
   rules.power = "none";
+  detected.power = power_source::battery;
   EXPECT_NE(pause(), 0);
   EXPECT_EQ(arrangement, "extend");
   EXPECT_EQ(power, "none");

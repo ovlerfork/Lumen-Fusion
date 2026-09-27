@@ -11,6 +11,7 @@
 #include <boost/asio.hpp>
 
 // local includes
+#include "adaptive_display.h"
 #include "audio.h"
 #include "crypto.h"
 #include "video.h"
@@ -49,6 +50,7 @@ namespace stream {
     std::shared_ptr<session_t> alloc(config_t &config, rtsp_stream::launch_session_t &launch_session);
     int start(session_t &session, const std::string &addr_string);
     void stop(session_t &session);
+    void stop_by_desktop_owner(session_t &session, adaptive_display::token owner);
     void join(session_t &session);
     state_e state(session_t &session);
     const std::string &client_cert(session_t &session);

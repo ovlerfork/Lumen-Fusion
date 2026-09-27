@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace adaptive_display {
   enum class presence {
@@ -51,6 +52,7 @@ namespace adaptive_display {
     bool paused = false, closed = false, revoked = false;
     presence role = presence::unknown;
     std::optional<std::chrono::steady_clock::time_point> deadline;
+    std::vector<token> revoked_owners;
   };
 
   // Native calls are serialized by the controller. They must not call back into
@@ -90,6 +92,7 @@ namespace adaptive_display {
     topology inspect();
     topology observe(clock::time_point now);
     bool may_retain(const topology &t) const;
+    void update_retention_power(const topology &t);
     void settle(bool disconnected, clock::time_point now);
     void destroy();
     backend native;

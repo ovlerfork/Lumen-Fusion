@@ -35,15 +35,14 @@ namespace adaptive_display {
     if (!rules.adaptive || revoked || closed || helper_failed) {
       return false;
     }
-    // Unknown power never permits indefinite retention, even with battery opt-in.
-    if (t.power == power_source::unknown && rules.retention.count() == 0) {
-      return false;
-    }
-    if (t.power != power_source::external && !rules.on_battery) {
-      return false;
-    }
     auto effective = t.local == presence::unknown ? role : t.local;
     return effective == presence::present ? rules.local_retain : rules.headless_retain;
+  }
+
+  void controller::update_retention_power(const topology &t) {
+    const bool permitted = t.power == power_source::external ||
+                           (t.power == power_source::battery && rules.on_battery);
+    native.retention_power(paused && permitted ? rules.power : "none");
   }
 
   void controller::destroy() {
@@ -106,6 +105,7 @@ namespace adaptive_display {
     // A retained desktop's mode and deadline remain unchanged until a successful
     // connection ends. Failed Resume attempts cannot replenish the idle budget.
     paused = false;
+    native.retention_power("none");
     const token result {epoch, ++next_attempt};
     owners.emplace(result.attempt, owner {});
     return result;
@@ -153,7 +153,7 @@ namespace adaptive_display {
     }
     successful_disconnect = false;
     paused = retained = true;
-    native.retention_power(rules.power);
+    update_retention_power(t);
   }
 
   void controller::finish(token t, clock::time_point now) {
@@ -222,6 +222,8 @@ namespace adaptive_display {
     }
     if (owners.empty() && (revoked || helper_failed || !may_retain(t) || (deadline && now >= *deadline))) {
       destroy();
+    } else {
+      update_retention_power(t);
     }
   }
 
@@ -238,9 +240,12 @@ namespace adaptive_display {
 
   status controller::snapshot() {
     std::lock_guard lock(mutex);
-    status result {display, 0, 0, paused, closed, revoked || helper_failed, role, deadline};
+    status result {display, 0, 0, paused, closed, revoked || helper_failed, role, deadline, {}};
     for (const auto &[id, o] : owners) {
       o.active ? ++result.active : ++result.preparing;
+      if (o.active && result.revoked) {
+        result.revoked_owners.push_back({epoch, id});
+      }
     }
     return result;
   }

@@ -2205,6 +2205,12 @@ namespace stream {
       session.shutdown_event->raise(true);
     }
 
+    void stop_by_desktop_owner(session_t &session, adaptive_display::token owner) {
+      if (owner && session.desktop.epoch == owner.epoch && session.desktop.attempt == owner.attempt) {
+        stop(session);
+      }
+    }
+
     void join(session_t &session) {
       // Current Nvidia drivers have a bug where NVENC can deadlock the encoder thread with hardware-accelerated
       // GPU scheduling enabled. If this happens, we will terminate ourselves and the service can restart.
@@ -2380,3 +2386,7 @@ namespace stream {
     }
   }  // namespace session
 }  // namespace stream
+
+#ifdef SUNSHINE_TESTS
+  #include "../tests/unit/stream_ownership_tests.h"
+#endif

@@ -65,6 +65,7 @@ namespace rtsp_stream {
    */
   void terminate_sessions();
   void terminate_sessions_by_cert(std::string_view cert);
+  void stop_by_desktop_owner(adaptive_display::token owner);
 
   /**
    * @brief Runs the RTSP server loop.

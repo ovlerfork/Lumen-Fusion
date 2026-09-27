@@ -93,14 +93,6 @@ namespace rtsp_stream {
         sock {io_context} {
     }
 
-    ~socket_t() {
-      // Successful RTSP requests deliberately use separate TCP connections.
-      if (session && !handled && !session->started.load()) {
-        session->aborted = true;
-        adaptive_display::abort(session->desktop);
-      }
-    }
-
     /**
      * @brief Queue an asynchronous read to begin the next message.
      */
@@ -391,13 +383,11 @@ namespace rtsp_stream {
     }
 
     void handle_data(msg_t &&req) {
-      handled = true;
       handle_data_fn(sock, *session, std::move(req));
     }
 
     std::function<void(tcp::socket &sock, launch_session_t &, msg_t &&)> handle_data_fn;
 
-    bool handled = false;
     tcp::socket sock;
 
     std::array<char, 2048> msg_buf;
@@ -624,6 +614,15 @@ namespace rtsp_stream {
       drain(std::move(draining));
     }
 
+    void stop_by_desktop_owner(adaptive_display::token owner) {
+      // Serialize with admission and extraction for drain. Only signal owned
+      // sessions here; joining can acquire the process lifecycle lock.
+      auto lg = _session_slots.lock();
+      for (const auto &slot : *_session_slots) {
+        stream::session::stop_by_desktop_owner(*slot, owner);
+      }
+    }
+
     void drain(std::vector<std::shared_ptr<stream::session_t>> draining) {
       // Native teardown and media joins never run under the slot lock. Keep
       // draining clients in the count so HTTP cannot probe over live capture.
@@ -709,6 +708,10 @@ namespace rtsp_stream {
     server.clear(true);
   }
 
+  void stop_by_desktop_owner(adaptive_display::token owner) {
+    server.stop_by_desktop_owner(owner);
+  }
+
   void terminate_sessions_by_cert(std::string_view cert) {
     server.clear_by_cert(cert);
   }
@@ -730,12 +733,8 @@ namespace rtsp_stream {
   }
 
   void respond(tcp::socket &sock, launch_session_t &session, msg_t &resp) {
-    auto failed_write = util::fail_guard([&] {
-      if (!session.started.load()) {
-        session.aborted = true;
-        adaptive_display::abort(session.desktop);
-      }
-    });
+    // Accepted sockets only borrow the pending launch. Transport errors do not
+    // own its lifetime; the pending deadline cleans up abandoned handshakes.
     auto payload = std::make_pair(resp->payload, resp->payloadLength);
 
     // Restore response message for proper destruction
@@ -805,14 +804,9 @@ namespace rtsp_stream {
         return;
       }
     }
-    failed_write.disable();
   }
 
   void respond(tcp::socket &sock, launch_session_t &session, POPTION_ITEM options, int statuscode, const char *status_msg, int seqn, const std::string_view &payload) {
-    if (statuscode >= 400 && !session.started.load()) {
-      session.aborted = true;
-      adaptive_display::abort(session.desktop);
-    }
     msg_t resp {new msg_t::element_type};
     createRtspResponse(resp.get(), nullptr, 0, const_cast<char *>("RTSP/1.0"), statuscode, const_cast<char *>(status_msg), seqn, options, const_cast<char *>(payload.data()), (int) payload.size());
 
@@ -1326,3 +1320,7 @@ namespace rtsp_stream {
                      << "---End MessageBuffer---"sv << std::endl;
   }
 }  // namespace rtsp_stream
+
+#ifdef SUNSHINE_TESTS
+  #include "../tests/unit/rtsp_ownership_tests.h"
+#endif
