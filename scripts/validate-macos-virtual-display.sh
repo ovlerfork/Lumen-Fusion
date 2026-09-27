@@ -15,9 +15,22 @@ fi
 test -x "$helper"
 sw_vers
 xcrun clang --version
+printf '\nNative display validation machine model: '
+sysctl -n hw.model
+system_profiler SPDisplaysDataType
 
+# Capture the system-side failure before a display-server reset can terminate
+# the disposable GUI session and prevent later Actions diagnostic steps.
+/usr/bin/log stream --style compact --level debug --predicate \
+  'process == "WindowServer" AND (eventMessage CONTAINS[c] "mirror" OR eventMessage CONTAINS[c] "assert" OR eventMessage CONTAINS[c] "crash")' &
+trace_pid=$!
 test_dir="$(mktemp -d "${RUNNER_TEMP:?}/native-display.XXXXXX")"
-trap 'rm -rf "$test_dir"' EXIT
+cleanup() {
+  kill "$trace_pid" 2>/dev/null || true
+  wait "$trace_pid" 2>/dev/null || true
+  rm -rf "$test_dir"
+}
+trap cleanup EXIT
 cp "$helper" "$test_dir/vd_helper"
 
 # The harness includes the current production wrapper with three observation
