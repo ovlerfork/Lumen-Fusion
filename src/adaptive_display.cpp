@@ -17,7 +17,7 @@ namespace adaptive_display {
 
   topology controller::observe(clock::time_point now) {
     auto t = inspect();
-    if (t.local == presence::present) {
+    if (t.local == presence::present && (role != t.local || local_main != t.local_main)) {
       if (!candidate_since || candidate_main != t.local_main) {
         candidate_since = now;
         candidate_main = t.local_main;
@@ -31,12 +31,32 @@ namespace adaptive_display {
     return t;
   }
 
-  bool controller::may_retain() const {
+  bool controller::update_role(const topology &t) {
+    if (!rules.adaptive) {
+      return true;
+    }
+    if (t.local == presence::unknown) {
+      return false;
+    }
+    if (role != t.local || local_main != t.local_main) {
+      if (!native.layout(t.local == presence::present ? "extend" : "primary", t.local_main)) {
+        if (!native.healthy(display)) {
+          helper_failed = true;
+        }
+        return false;
+      }
+      role = t.local;
+      local_main = t.local_main;
+    }
+    return true;
+  }
+
+  bool controller::may_retain(bool role_confirmed) const {
     if (!rules.adaptive || revoked || closed || helper_failed) {
       return false;
     }
-    // Only an accepted layout can change the policy used for topology cleanup.
-    return role == presence::present ? rules.local_retain : rules.headless_retain;
+    // Uncertain observations and unaccepted transitions cannot authorize teardown.
+    return !role_confirmed || (role == presence::present ? rules.local_retain : rules.headless_retain);
   }
 
   void controller::update_retention_power(const topology &t) {
@@ -151,8 +171,13 @@ namespace adaptive_display {
       update_retention_power(t);
       return;
     }
-    if (!display || !native.healthy(display) || !may_retain() || (!last_disconnect && !deadline && !retained)) {
+    if (!display || !native.healthy(display) || (!last_disconnect && !deadline && !retained)) {
       // A failed first connection has no retained desktop to restore.
+      destroy();
+      return;
+    }
+    const bool role_confirmed = update_role(t);
+    if (!may_retain(role_confirmed)) {
       destroy();
       return;
     }
@@ -224,15 +249,8 @@ namespace adaptive_display {
       return;
     }
     auto t = observe(now);
-    if (rules.adaptive && t.local != presence::unknown && (role != t.local || local_main != t.local_main)) {
-      if (native.layout(t.local == presence::present ? "extend" : "primary", t.local_main)) {
-        role = t.local;
-        local_main = t.local_main;
-      } else if (!native.healthy(display)) {
-        helper_failed = true;
-      }
-    }
-    if (owners.empty() && (revoked || helper_failed || !may_retain() || (deadline && now >= *deadline))) {
+    const bool role_confirmed = update_role(t);
+    if (owners.empty() && (revoked || helper_failed || !may_retain(role_confirmed) || (deadline && now >= *deadline))) {
       destroy();
     } else {
       update_retention_power(t);

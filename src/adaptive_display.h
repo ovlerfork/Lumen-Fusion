@@ -95,7 +95,8 @@ namespace adaptive_display {
     bool matches(token t) const;
     topology inspect();
     topology observe(clock::time_point now);
-    bool may_retain() const;
+    bool update_role(const topology &t);
+    bool may_retain(bool role_confirmed) const;
     void update_retention_power(const topology &t);
     void settle(bool disconnected, clock::time_point now);
     void destroy();

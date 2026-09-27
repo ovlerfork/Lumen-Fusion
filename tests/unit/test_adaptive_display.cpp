@@ -489,3 +489,47 @@ TEST_F(AdaptiveDesktop, FailedLayoutDoesNotBlockExpiryCancelOrConfirmedDeath) {
     EXPECT_EQ(power, "none");
   }
 }
+
+TEST_F(AdaptiveDesktop, LocalLossAtLastDisconnectRetainsWithoutWatcherReconcile) {
+  detected.local = presence::present;
+  detected.local_main = 1;
+  auto t = connect();
+  const auto id = resource;
+  ASSERT_EQ(arrangement, "extend");
+  detected.local = presence::absent;
+  detected.local_main = 0;
+  desktop.finish(t, now + 10s);
+  EXPECT_EQ(resource, id);
+  EXPECT_EQ(arrangement, "primary");
+  EXPECT_EQ(desktop.snapshot().role, presence::absent);
+  EXPECT_TRUE(desktop.snapshot().paused);
+  EXPECT_EQ(desktop.snapshot().deadline, now + 610s);
+}
+
+TEST_F(AdaptiveDesktop, FailedPrimaryTransitionDefersRemovalUntilTopologyRecovers) {
+  detected.local = presence::present;
+  detected.local_main = 1;
+  auto t = connect();
+  const auto id = resource;
+  detected.local = presence::absent;
+  detected.local_main = 0;
+  layout_ok = false;
+  desktop.finish(t, now + 10s);
+  EXPECT_EQ(resource, id);
+  EXPECT_EQ(desktop.snapshot().role, presence::present);
+  EXPECT_TRUE(desktop.snapshot().paused);
+  desktop.reconcile(now + 11s);
+  EXPECT_EQ(resource, id);
+  detected.local = presence::unknown;
+  desktop.reconcile(now + 12s);
+  EXPECT_EQ(resource, id);
+  detected.local = presence::absent;
+  layout_ok = true;
+  desktop.reconcile(now + 13s);
+  EXPECT_EQ(resource, id);
+  EXPECT_EQ(arrangement, "primary");
+  EXPECT_EQ(desktop.snapshot().role, presence::absent);
+  EXPECT_EQ(desktop.snapshot().deadline, now + 610s);
+  desktop.reconcile(now + 610s);
+  EXPECT_EQ(resource, 0);
+}
