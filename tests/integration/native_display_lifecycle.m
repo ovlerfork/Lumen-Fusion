@@ -200,8 +200,50 @@ static BOOL waitForRemoval(CGDirectDisplayID id) {
   return NO;
 }
 
-static CGDirectDisplayID addLocalDisplay(CGPoint origin) {
+static BOOL waitForDisplays(const CGDirectDisplayID *expected, uint32_t expectedCount, BOOL active) {
+  for (int attempt = 0; attempt < 100; ++attempt) {
+    CGDirectDisplayID online[64], displays[64];
+    uint32_t onlineCount = 0, count = 0;
+    if (CGGetOnlineDisplayList(64, online, &onlineCount) == kCGErrorSuccess && onlineCount < 64 &&
+        CGGetActiveDisplayList(64, displays, &count) == kCGErrorSuccess && count < 64) {
+      BOOL foundAll = YES;
+      for (uint32_t i = 0; i < expectedCount; ++i) {
+        BOOL foundOnline = NO, foundActive = NO;
+        for (uint32_t j = 0; j < onlineCount; ++j) foundOnline |= online[j] == expected[i];
+        // Before unmirroring, an enumerated active master also makes a newly
+        // registered mirror slave usable for configuration.
+        CGDirectDisplayID master = !active && foundOnline ? CGDisplayMirrorsDisplay(expected[i]) : 0;
+        for (uint32_t j = 0; j < count; ++j)
+          foundActive |= displays[j] == expected[i] || (master && displays[j] == master);
+        foundAll &= foundOnline && foundActive;
+      }
+      if (foundAll) return YES;
+    }
+    if (CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.1, false) == kCFRunLoopRunFinished)
+      usleep(100000);
+  }
+  fprintf(stderr, "[native_display_lifecycle] timed out waiting for %s display IDs:", active ? "active" : "online");
+  for (uint32_t i = 0; i < expectedCount; ++i) fprintf(stderr, " %u", expected[i]);
+  fputc('\n', stderr);
+  return NO;
+}
+
+static CGError fixtureOrigin(CGDisplayConfigRef config, CGDirectDisplayID id, CGPoint origin) {
+  CGError err = CGConfigureDisplayOrigin(config, id, (int32_t)origin.x, (int32_t)origin.y);
+  fprintf(stderr, "[native_display_lifecycle] fixture origin display=%u requested=(%.0f,%.0f) error=%d\n",
+          id, origin.x, origin.y, err);
+  return err;
+}
+
+static CGDirectDisplayID addLocalDisplay(CGPoint origin, BOOL insertBeforeLocals) {
   logDisplays("before fixture creation");
+  CGDirectDisplayID expected[64];
+  CGRect before[64];
+  uint32_t existingCount = 0;
+  require(CGGetActiveDisplayList(64, expected, &existingCount) == kCGErrorSuccess &&
+          existingCount > 0 && existingCount < 63, "fixture snapshots complete active topology");
+  CGDirectDisplayID main = expected[0];
+  for (uint32_t i = 0; i < existingCount; ++i) before[i] = CGDisplayBounds(expected[i]);
   CGVirtualDisplayDescriptor *descriptor = [[CGVirtualDisplayDescriptor alloc] init];
   descriptor.name = @"Native lifecycle local fixture";
   descriptor.vendorID = 0xF0F0;
@@ -225,20 +267,43 @@ static CGDirectDisplayID addLocalDisplay(CGPoint origin) {
   CGDirectDisplayID id = localFixture.displayID;
   fprintf(stderr, "[native_display_lifecycle] fixture=%u requestedOrigin=(%.0f,%.0f) scope=app-only\n",
           id, origin.x, origin.y);
-  BOOL online = NO;
-  for (int i = 0; i < 100; ++i) {
-    if (CGDisplayIsOnline(id)) { online = YES; break; }
-    CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.05, false);
-    usleep(50000);
-  }
-  require(online, "local fixture online");
+  expected[existingCount] = id;
+  require(waitForDisplays(expected, existingCount + 1, NO), "local fixture online");
   CGDisplayConfigRef config;
-  require(CGBeginDisplayConfiguration(&config) == kCGErrorSuccess, "fixture arrangement begin");
-  CGError err = CGConfigureDisplayMirrorOfDisplay(config, id, kCGNullDirectDisplay);
-  if (err == kCGErrorSuccess) err = CGConfigureDisplayOrigin(config, id, (int32_t)origin.x, (int32_t)origin.y);
-  if (err == kCGErrorSuccess) err = CGCompleteDisplayConfiguration(config, kCGConfigureForAppOnly);
-  else CGCancelDisplayConfiguration(config);
+  CGError err = CGBeginDisplayConfiguration(&config);
+  fprintf(stderr, "[native_display_lifecycle] fixture begin error=%d\n", err);
+  require(err == kCGErrorSuccess, "fixture arrangement begin");
+  err = CGConfigureDisplayMirrorOfDisplay(config, id, kCGNullDirectDisplay);
+  fprintf(stderr, "[native_display_lifecycle] fixture unmirror display=%u error=%d\n", id, err);
+  // Registration may have retiled every existing display. Configure the full
+  // destination in one transaction, with the virtual main fixed at the origin.
+  for (uint32_t i = 0; i < existingCount && err == kCGErrorSuccess; ++i) {
+    if (CGDisplayMirrorsDisplay(expected[i])) {
+      err = CGConfigureDisplayMirrorOfDisplay(config, expected[i], kCGNullDirectDisplay);
+      fprintf(stderr, "[native_display_lifecycle] fixture unmirror display=%u error=%d\n", expected[i], err);
+      if (err != kCGErrorSuccess) break;
+    }
+    if (expected[i] == main) continue;
+    if (insertBeforeLocals) before[i].origin.x += 1600;
+    err = fixtureOrigin(config, expected[i], before[i].origin);
+  }
+  if (err == kCGErrorSuccess) err = fixtureOrigin(config, id, origin);
+  if (err == kCGErrorSuccess) err = fixtureOrigin(config, main, CGPointZero);
+  if (err == kCGErrorSuccess) {
+    err = CGCompleteDisplayConfiguration(config, kCGConfigureForAppOnly);
+    fprintf(stderr, "[native_display_lifecycle] fixture complete error=%d\n", err);
+  } else {
+    CGError cancelErr = CGCancelDisplayConfiguration(config);
+    fprintf(stderr, "[native_display_lifecycle] fixture cancel error=%d\n", cancelErr);
+  }
   require(err == kCGErrorSuccess, "fixture positioned to the right");
+  require(waitForDisplays(expected, existingCount + 1, YES), "fixture topology active");
+  require(waitForMain(main), "fixture preserves virtual main");
+  require(CGPointEqualToPoint(CGDisplayBounds(id).origin, origin), "fixture has exact requested origin");
+  for (uint32_t i = 0; i < existingCount; ++i) {
+    require(CGPointEqualToPoint(CGDisplayBounds(expected[i]).origin, before[i].origin), "fixture preserves requested existing origins");
+    require(!CGRectIntersectsRect(CGDisplayBounds(id), CGDisplayBounds(expected[i])), "fixture clears every existing display");
+  }
   logDisplays("after fixture configuration");
   return id;
 }
@@ -343,17 +408,62 @@ int main(int argc, char **argv) {
       offlineObservation = inactiveObservation = NO;
       require(virtual_display_ensure(1280, 720, 60, "primary") == id && observedHelper == originalHelper, "retry resumes same helper and display");
     }
+    require(waitForMain(id), "primary ready before retiled hotplug");
+    CGPoint beforeRetile = CGDisplayBounds(originalMain).origin;
+    CGRect beforeRetileBounds[64];
+    CGFloat localLeft = beforeRetile.x;
+    for (uint32_t i = 0; i < count; ++i) {
+      beforeRetileBounds[i] = CGDisplayBounds(displays[i]);
+      localLeft = MIN(localLeft, beforeRetileBounds[i].origin.x);
+    }
+    // Reproduce WindowServer inserting a display between the virtual main and
+    // existing locals, displacing those locals by the new display's width.
+    CGPoint insertedOrigin = CGPointMake(localLeft, beforeRetile.y);
+    CGDirectDisplayID inserted = addLocalDisplay(insertedOrigin, YES);
+    CGPoint restoredInserted = CGPointMake(insertedOrigin.x - beforeRetile.x - 1600,
+                                           insertedOrigin.y - beforeRetile.y);
+    require(virtual_display_apply_layout("primary", 0) && waitForMain(id), "primary observes retiled hotplug");
+    require(virtual_display_get_id() == id && observedHelper == originalHelper, "retiled primary keeps helper and ID");
+    require(CGPointEqualToPoint(CGDisplayBounds(inserted).origin, insertedOrigin), "retiled primary preserves new local origin");
+    for (uint32_t i = 0; i < count; ++i) {
+      CGPoint expected = beforeRetileBounds[i].origin;
+      expected.x += 1600;
+      require(CGPointEqualToPoint(CGDisplayBounds(displays[i]).origin, expected), "retiled primary preserves local arrangement");
+      require(!CGRectIntersectsRect(CGDisplayBounds(inserted), CGDisplayBounds(displays[i])), "retiled primary has no local collisions");
+    }
+    require(!CGRectIntersectsRect(CGDisplayBounds(id), CGDisplayBounds(inserted)), "retiled primary clears new local");
+    require(virtual_display_apply_layout("extend", originalMain) && waitForMain(originalMain), "retiled extension restores local main");
+    require(virtual_display_get_id() == id && observedHelper == originalHelper, "retiled extension keeps helper and ID");
+    require(CGPointEqualToPoint(CGDisplayBounds(inserted).origin, restoredInserted), "retiled hotplug normalized against observed local frame");
+    for (uint32_t i = 0; i < count; ++i) {
+      require(CGPointEqualToPoint(CGDisplayBounds(displays[i]).origin, bounds[i].origin), "retiled extension restores local origins");
+      require(!CGRectIntersectsRect(CGDisplayBounds(inserted), CGDisplayBounds(displays[i])), "retiled extension has no local collisions");
+      require(!CGRectIntersectsRect(CGDisplayBounds(id), CGDisplayBounds(displays[i])), "retiled extension clears existing locals");
+    }
+    require(!CGRectIntersectsRect(CGDisplayBounds(id), CGDisplayBounds(inserted)), "retiled extension clears new local");
+    virtual_display_destroy();
+    require(virtual_display_get_id() == 0 && waitForRemoval(id), "retiled teardown releases VD");
+    require(waitForMain(originalMain), "retiled teardown restores main");
+    require(CGPointEqualToPoint(CGDisplayBounds(inserted).origin, restoredInserted), "retiled teardown preserves new local origin");
+    for (uint32_t i = 0; i < count; ++i)
+      require(CGPointEqualToPoint(CGDisplayBounds(displays[i]).origin, bounds[i].origin), "retiled teardown preserves existing origins");
+    localFixture = nil;
+    require(waitForRemoval(inserted), "retiled fixture released");
+    id = virtual_display_ensure(1280, 720, 60, "primary");
+    require(id != 0 && waitForMain(id), "primary ready for right-side hotplug");
     CGPoint translation = CGDisplayBounds(originalMain).origin;
     CGFloat right = 0;
     for (uint32_t i = 0; i < count; ++i) right = MAX(right, CGRectGetMaxX(CGDisplayBounds(displays[i])));
     CGPoint pluggedOrigin = CGPointMake(right, translation.y);
-    CGDirectDisplayID plugged = addLocalDisplay(pluggedOrigin);
+    CGDirectDisplayID plugged = addLocalDisplay(pluggedOrigin, NO);
     CGPoint restoredPlugged = CGPointMake(pluggedOrigin.x - translation.x, pluggedOrigin.y - translation.y);
     fprintf(stderr, "[native_display_lifecycle] fixture=%u expectedRestoredOrigin=(%.0f,%.0f) translation=(%.0f,%.0f)\n",
             plugged, restoredPlugged.x, restoredPlugged.y, translation.x, translation.y);
     require(virtual_display_apply_layout("primary", 0), "primary observes hotplug");
+    require(waitForMain(id), "hotplug primary observed");
     CGRect pluggedPrimary = CGDisplayBounds(plugged);
     require(virtual_display_apply_layout("primary", 0), "repeated primary");
+    require(waitForMain(id), "repeated primary observed");
     require(CGPointEqualToPoint(CGDisplayBounds(plugged).origin, pluggedPrimary.origin), "hotplug primary is idempotent");
     logDisplays("before extension request");
     require(virtual_display_apply_layout("extend", originalMain), "extension acknowledgement");
@@ -366,6 +476,7 @@ int main(int argc, char **argv) {
       require(CGPointEqualToPoint(CGDisplayBounds(displays[i]).origin, bounds[i].origin), "extension preserves local arrangement");
     }
     require(virtual_display_apply_layout("extend", originalMain), "repeated extension");
+    require(waitForMain(originalMain), "repeated extension observed");
     require(CGPointEqualToPoint(CGDisplayBounds(plugged).origin, restoredPlugged), "extension is idempotent");
     require(virtual_display_apply_layout("primary", 0) && waitForMain(id), "primary switch keeps helper");
     require(virtual_display_get_id() == id, "primary keeps ID");

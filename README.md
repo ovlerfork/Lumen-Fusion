@@ -34,6 +34,28 @@ System audio uses ScreenCaptureKit and is captured as stereo. Leave the audio de
 
 The menu-bar Launch at Login setting is opt-in and off by default. It uses `SMAppService.mainAppService`, macOS's per-user application login item, rather than a system daemon. The menu reflects the system approval status. If macOS reports that approval is required, open the system Login Items settings and approve it there; cancelling leaves it disabled. You can also turn the setting off, and the app does not enable it again by itself.
 
+## Adaptive virtual desktop (opt-in)
+
+In **Configuration → Audio/Video**, enable the virtual display and select **Adaptive** layout. Existing installations keep their previous Extend/Mirror/System behavior until you select this mode.
+
+| Situation | Adaptive behavior |
+| --- | --- |
+| Another local screen is usable | The remote display is an extension. Its default disconnect action removes it, allowing macOS to return windows to the remaining screen. |
+| No other local screen is usable | The virtual display becomes primary. Temporary disconnect stops media but retains the desktop for Resume. |
+| A local screen returns while paused | After a short availability check, the local screen becomes primary again and the unused virtual screen is removed under the default policy. |
+| A local screen returns while streaming | The virtual screen becomes an extension without ending its active stream. |
+| Explicitly end the remote desktop session or quit Lumen Fusion | Retained desktop resources and the app's idle-power assertions are released. |
+
+The local-screen and headless disconnect actions are independently configurable. Retention defaults to **600 seconds (10 minutes)**; **0** keeps the desktop until you explicitly end the session or release it. The menu-bar **Virtual Desktop…** entry shows its state and allows releasing an unused desktop. No capture, video/audio encoding, or media packet loop is kept running solely for retention; applications and WindowServer may still render their own content.
+
+The power setting can prevent system idle sleep, prevent both display and system idle sleep, or leave idle sleep unrestricted. **Battery keep-awake is off by default**: a retained desktop can remain, but disallowed idle-power assertions are released. Permit battery keep-awake explicitly when needed, including if turning off a USB-C monitor also removes charging power. Unknown power state does not grant indefinite keep-awake.
+
+Display detection excludes this app's virtual screen and checks active/awake local outputs and closed-lid state. Some monitors or docks continue advertising a powered-off panel; **Local display detection → Treat as absent/present** provides an override. Detection is not a guarantee that the panel is physically visible. Windows and full-screen Spaces are managed by macOS; not every application's window placement can be guaranteed.
+
+Resume reuses a still-owned, usable virtual display. If the client negotiates a different resolution or frame rate while the desktop is retained, the desktop keeps its current mode and the media pipeline scales to the requested output. End the desktop session and reconnect to change the desktop's mode.
+
+This feature does **not** unlock the Mac, change password policies, or override manual sleep, lid-close sleep, thermal protection, or low-battery sleep. It is not a replacement for macOS closed-display operating requirements. Idle-sleep prevention and screen-lock policy remain separate.
+
 ## Pair and stream
 
 1. Open the local administration page from the menu bar.

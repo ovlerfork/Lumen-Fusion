@@ -119,7 +119,7 @@ static NSMutableDictionary<NSNumber *, NSValue *> *originalOrigins;
 static NSMutableDictionary<NSNumber *, NSNumber *> *originalMirrors;
 static CGDirectDisplayID originalMain;
 static BOOL layoutChanged;
-// Current local origins = saved original origins + appliedTranslation.
+// Translation from the last successful layout; hotplug may retile locals later.
 static NSPoint appliedTranslation;
 
 static void logLayout(const char *phase) {
@@ -140,19 +140,36 @@ static void logLayout(const char *phase) {
 
 static BOOL rememberDisplays(void) {
   CGDirectDisplayID displays[64];
+  CGDirectDisplayID active[64];
   uint32_t count = 0;
-  if (CGGetOnlineDisplayList(64, displays, &count) != kCGErrorSuccess || count == 64)
+  uint32_t activeCount = 0;
+  if (CGGetOnlineDisplayList(64, displays, &count) != kCGErrorSuccess || count == 64 ||
+      CGGetActiveDisplayList(64, active, &activeCount) != kCGErrorSuccess || activeCount == 64)
     return NO;
+  // Registration can insert a new display before existing locals. Recover the
+  // current coordinate frame from a saved local, not our last requested offset.
+  CGDirectDisplayID anchor = 0;
+  for (uint32_t i = 0; i < activeCount; ++i) {
+    if (active[i] == keepAlive.displayID || !originalOrigins[@(active[i])]) continue;
+    if (!anchor || active[i] == originalMain) anchor = active[i];
+  }
+  NSPoint observedTranslation = appliedTranslation;
+  if (anchor) {
+    CGPoint current = CGDisplayBounds(anchor).origin;
+    NSPoint saved = originalOrigins[@(anchor)].pointValue;
+    observedTranslation = NSMakePoint(current.x - saved.x, current.y - saved.y);
+  }
   for (uint32_t i = 0; i < count; ++i) {
     CGDirectDisplayID id = displays[i];
     if (id == keepAlive.displayID || originalOrigins[@(id)]) continue;
     NSPoint origin = NSPointFromCGPoint(CGDisplayBounds(id).origin);
-    origin.x -= appliedTranslation.x;
-    origin.y -= appliedTranslation.y;
+    origin.x -= observedTranslation.x;
+    origin.y -= observedTranslation.y;
     originalOrigins[@(id)] = [NSValue valueWithPoint:origin];
     originalMirrors[@(id)] = @(CGDisplayMirrorsDisplay(id));
-    fprintf(stderr, "[vd_helper] snapshot display=%u savedOrigin=(%.0f,%.0f) mirror=%u translation=(%.0f,%.0f)\n",
+    fprintf(stderr, "[vd_helper] snapshot display=%u savedOrigin=(%.0f,%.0f) mirror=%u anchor=%u observedTranslation=(%.0f,%.0f) appliedTranslation=(%.0f,%.0f)\n",
             id, origin.x, origin.y, originalMirrors[@(id)].unsignedIntValue,
+            anchor, observedTranslation.x, observedTranslation.y,
             appliedTranslation.x, appliedTranslation.y);
   }
   return YES;
@@ -170,6 +187,20 @@ static CGDirectDisplayID localMain(CGDirectDisplayID virtualID, CGDirectDisplayI
   return 0;
 }
 
+static CGError configureOrigin(CGDisplayConfigRef config, CGDirectDisplayID id, int32_t x, int32_t y) {
+  CGError err = CGConfigureDisplayOrigin(config, id, x, y);
+  if (err != kCGErrorSuccess)
+    fprintf(stderr, "[vd_helper] origin failed display=%u requested=(%d,%d) error=%d\n", id, x, y, err);
+  return err;
+}
+
+static CGError configureMirror(CGDisplayConfigRef config, CGDirectDisplayID id, CGDirectDisplayID master) {
+  CGError err = CGConfigureDisplayMirrorOfDisplay(config, id, master);
+  if (err != kCGErrorSuccess)
+    fprintf(stderr, "[vd_helper] mirror failed display=%u master=%u error=%d\n", id, master, err);
+  return err;
+}
+
 static void restoreLayout(void) {
   if (!layoutChanged) return;
   logLayout("before restore");
@@ -182,7 +213,7 @@ static void restoreLayout(void) {
   }
   CGFloat destinationRight = 0;
   if (keepAlive && CGDisplayIsOnline(keepAlive.displayID) &&
-      CGConfigureDisplayMirrorOfDisplay(config, keepAlive.displayID, kCGNullDirectDisplay) != kCGErrorSuccess)
+      configureMirror(config, keepAlive.displayID, kCGNullDirectDisplay) != kCGErrorSuccess)
     err = kCGErrorFailure;
   for (NSNumber *key in originalOrigins) {
     CGDirectDisplayID id = key.unsignedIntValue;
@@ -193,14 +224,14 @@ static void restoreLayout(void) {
     if (mirror && !CGDisplayIsOnline(mirror)) mirror = 0;
     fprintf(stderr, "[vd_helper] restore request display=%u origin=(%.0f,%.0f) mirror=%u\n",
             id, origin.x, origin.y, mirror);
-    if (CGConfigureDisplayMirrorOfDisplay(config, id, mirror) != kCGErrorSuccess) err = kCGErrorFailure;
-    if (CGConfigureDisplayOrigin(config, id, (int32_t)origin.x, (int32_t)origin.y) != kCGErrorSuccess) err = kCGErrorFailure;
+    if (configureMirror(config, id, mirror) != kCGErrorSuccess) err = kCGErrorFailure;
+    if (configureOrigin(config, id, (int32_t)origin.x, (int32_t)origin.y) != kCGErrorSuccess) err = kCGErrorFailure;
   }
   if (keepAlive && CGDisplayIsOnline(keepAlive.displayID)) {
     // Park beyond every local's destination, not its currently translated bounds.
     fprintf(stderr, "[vd_helper] restore request display=%u origin=(%.0f,0) mirror=0\n",
             keepAlive.displayID, destinationRight);
-    if (CGConfigureDisplayOrigin(config, keepAlive.displayID, (int32_t)destinationRight, 0) != kCGErrorSuccess)
+    if (configureOrigin(config, keepAlive.displayID, (int32_t)destinationRight, 0) != kCGErrorSuccess)
       err = kCGErrorFailure;
   }
   if (err == kCGErrorSuccess) err = CGCompleteDisplayConfiguration(config, kCGConfigureForAppOnly);
@@ -223,10 +254,14 @@ static BOOL applyLayout(CGDirectDisplayID virtualID, vd_layout_t layout, CGDirec
           name, virtualID, preferred, main, layout == VD_LAYOUT_PRIMARY ? virtualID : main);
   if (layout == VD_LAYOUT_MIRROR && !main) return YES; // No local master in a headless session.
   CGDisplayConfigRef config = NULL;
-  if (CGBeginDisplayConfiguration(&config) != kCGErrorSuccess) return NO;
+  CGError beginErr = CGBeginDisplayConfiguration(&config);
+  if (beginErr != kCGErrorSuccess) {
+    fprintf(stderr, "[vd_helper] layout=%s begin failed: %d\n", name, beginErr);
+    return NO;
+  }
   fprintf(stderr, "[vd_helper] request virtual=%u mirror=%u\n",
           virtualID, layout == VD_LAYOUT_MIRROR ? main : kCGNullDirectDisplay);
-  CGError err = CGConfigureDisplayMirrorOfDisplay(config, virtualID,
+  CGError err = configureMirror(config, virtualID,
       layout == VD_LAYOUT_MIRROR ? main : kCGNullDirectDisplay);
   NSPoint translation = appliedTranslation;
   {
@@ -235,7 +270,7 @@ static BOOL applyLayout(CGDirectDisplayID virtualID, vd_layout_t layout, CGDirec
       CGDirectDisplayID id = key.unsignedIntValue;
       if (CGDisplayIsOnline(id) && CGDisplayMirrorsDisplay(id) == virtualID) {
         fprintf(stderr, "[vd_helper] request display=%u mirror=0\n", id);
-        if (CGConfigureDisplayMirrorOfDisplay(config, id, kCGNullDirectDisplay) != kCGErrorSuccess)
+        if (configureMirror(config, id, kCGNullDirectDisplay) != kCGErrorSuccess)
           err = kCGErrorFailure;
       }
     }
@@ -257,23 +292,25 @@ static BOOL applyLayout(CGDirectDisplayID virtualID, vd_layout_t layout, CGDirec
       right = MAX(right, origin.x + CGDisplayBounds(id).size.width);
       fprintf(stderr, "[vd_helper] request display=%u origin=(%.0f,%.0f) savedOrigin=(%.0f,%.0f)\n",
               id, origin.x, origin.y, originalOrigins[key].pointValue.x, originalOrigins[key].pointValue.y);
-      if (CGConfigureDisplayOrigin(config, id, (int32_t)origin.x,
-                                   (int32_t)origin.y) != kCGErrorSuccess) err = kCGErrorFailure;
+      if (configureOrigin(config, id, (int32_t)origin.x,
+                          (int32_t)origin.y) != kCGErrorSuccess) err = kCGErrorFailure;
     }
     if (layout != VD_LAYOUT_MIRROR) {
       fprintf(stderr, "[vd_helper] request virtual=%u origin=(%.0f,0)\n",
               virtualID, layout == VD_LAYOUT_PRIMARY ? 0.0 : right);
-      if (CGConfigureDisplayOrigin(config, virtualID, layout == VD_LAYOUT_PRIMARY ? 0 : (int32_t)right, 0) != kCGErrorSuccess)
+      if (configureOrigin(config, virtualID, layout == VD_LAYOUT_PRIMARY ? 0 : (int32_t)right, 0) != kCGErrorSuccess)
         err = kCGErrorFailure;
     }
     if (layout != VD_LAYOUT_PRIMARY && main) {
       fprintf(stderr, "[vd_helper] request main=%u origin=(0,0) last\n", main);
-      if (CGConfigureDisplayOrigin(config, main, 0, 0) != kCGErrorSuccess) err = kCGErrorFailure;
+      if (configureOrigin(config, main, 0, 0) != kCGErrorSuccess) err = kCGErrorFailure;
     }
   }
   if (err != kCGErrorSuccess) {
     fprintf(stderr, "[vd_helper] layout=%s configuration failed: %d\n", name, err);
-    CGCancelDisplayConfiguration(config);
+    CGError cancelErr = CGCancelDisplayConfiguration(config);
+    if (cancelErr != kCGErrorSuccess)
+      fprintf(stderr, "[vd_helper] layout=%s cancel failed: %d\n", name, cancelErr);
     return NO;
   }
   layoutChanged = YES;
