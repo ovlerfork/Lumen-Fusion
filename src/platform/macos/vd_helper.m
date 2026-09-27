@@ -154,30 +154,36 @@ static CGDirectDisplayID localMain(CGDirectDisplayID virtualID, CGDirectDisplayI
 static void restoreLayout(void) {
   if (!layoutChanged) return;
   CGDisplayConfigRef config = NULL;
-  if (CGBeginDisplayConfiguration(&config) != kCGErrorSuccess) return;
-  CGError err = kCGErrorSuccess;
+  CGError err = CGBeginDisplayConfiguration(&config);
+  if (err != kCGErrorSuccess) {
+    fprintf(stderr, "[vd_helper] Could not begin layout restoration: %d\n", err);
+    return;
+  }
+  CGFloat destinationRight = 0;
   if (keepAlive && CGDisplayIsOnline(keepAlive.displayID) &&
       CGConfigureDisplayMirrorOfDisplay(config, keepAlive.displayID, kCGNullDirectDisplay) != kCGErrorSuccess)
     err = kCGErrorFailure;
   for (NSNumber *key in originalOrigins) {
     CGDirectDisplayID id = key.unsignedIntValue;
     if (!CGDisplayIsOnline(id)) continue;
-    NSPoint origin = originalOrigins[key].pointValue;
+    NSPoint origin = id == originalMain ? NSZeroPoint : originalOrigins[key].pointValue;
+    destinationRight = MAX(destinationRight, origin.x + CGDisplayBounds(id).size.width);
     CGDirectDisplayID mirror = originalMirrors[key].unsignedIntValue;
     if (mirror && !CGDisplayIsOnline(mirror)) mirror = 0;
     if (CGConfigureDisplayMirrorOfDisplay(config, id, mirror) != kCGErrorSuccess) err = kCGErrorFailure;
     if (CGConfigureDisplayOrigin(config, id, (int32_t)origin.x, (int32_t)origin.y) != kCGErrorSuccess) err = kCGErrorFailure;
   }
   if (keepAlive && CGDisplayIsOnline(keepAlive.displayID)) {
-    // Vacate (0,0) before restoring the original main while the VD still exists.
-    CGRect bounds = CGDisplayBounds(originalMain);
-    if (CGConfigureDisplayOrigin(config, keepAlive.displayID, (int32_t)CGRectGetMaxX(bounds), 0) != kCGErrorSuccess)
+    // Park beyond every local's destination, not its currently translated bounds.
+    if (CGConfigureDisplayOrigin(config, keepAlive.displayID, (int32_t)destinationRight, 0) != kCGErrorSuccess)
       err = kCGErrorFailure;
   }
-  if (originalMain && CGDisplayIsOnline(originalMain) &&
-      CGConfigureDisplayOrigin(config, originalMain, 0, 0) != kCGErrorSuccess) err = kCGErrorFailure;
   if (err == kCGErrorSuccess) err = CGCompleteDisplayConfiguration(config, kCGConfigureForAppOnly);
-  else CGCancelDisplayConfiguration(config);
+  else {
+    CGError cancelErr = CGCancelDisplayConfiguration(config);
+    if (cancelErr != kCGErrorSuccess)
+      fprintf(stderr, "[vd_helper] Could not cancel layout restoration: %d\n", cancelErr);
+  }
   if (err != kCGErrorSuccess) fprintf(stderr, "[vd_helper] Could not restore display layout: %d\n", err);
 }
 

@@ -138,7 +138,9 @@ static CGDirectDisplayID addLocalDisplay(CGPoint origin) {
   descriptor.vendorID = 0xF0F0;
   descriptor.productID = 0x5679;
   descriptor.serialNum = (unsigned int)getpid();
-  descriptor.maxPixelsWide = 800;
+  // Wider than the 1280px VD so parking at the translated main edge also
+  // intersects this local display when restoring from primary.
+  descriptor.maxPixelsWide = 1600;
   descriptor.maxPixelsHigh = 600;
   descriptor.sizeInMillimeters = CGSizeMake(300, 225);
   descriptor.whitePoint = CGPointMake(0.3127, 0.3290);
@@ -148,7 +150,7 @@ static CGDirectDisplayID addLocalDisplay(CGPoint origin) {
   [descriptor setDispatchQueue:dispatch_get_main_queue()];
   CGVirtualDisplaySettings *settings = [[CGVirtualDisplaySettings alloc] init];
   settings.hiDPI = 0;
-  settings.modes = @[[[CGVirtualDisplayMode alloc] initWithWidth:800 height:600 refreshRate:60]];
+  settings.modes = @[[[CGVirtualDisplayMode alloc] initWithWidth:1600 height:600 refreshRate:60]];
   localFixture = [[CGVirtualDisplay alloc] initWithDescriptor:descriptor];
   require(localFixture && [localFixture applySettings:settings], "local native fixture creation");
   CGDirectDisplayID id = localFixture.displayID;
@@ -282,7 +284,20 @@ int main(int argc, char **argv) {
       require(CGDisplayIsOnline(displays[i]), "physical screen stays online");
       require(CGPointEqualToPoint(CGDisplayBounds(displays[i]).origin, bounds[i].origin), "original logical origin restored");
     }
-    require(CGPointEqualToPoint(CGDisplayBounds(plugged).origin, restoredPlugged), "hotplug original-frame restoration");
+    require(CGPointEqualToPoint(CGDisplayBounds(plugged).origin, restoredPlugged), "primary teardown restores right-side local origin");
+    // Keep the right-side local online for teardown from extend as well as primary.
+    id = virtual_display_create(1280, 720, 60, "extend");
+    require(id != 0, "extension with multiple horizontal locals");
+    require(!CGRectIntersectsRect(CGDisplayBounds(id), CGDisplayBounds(plugged)), "extension starts beyond right-side local");
+    virtual_display_destroy();
+    require(virtual_display_get_id() == 0 && waitForRemoval(id), "extension teardown releases VD");
+    require(waitForMain(originalMain), "extension teardown restores original main");
+    for (uint32_t i = 0; i < count; ++i) {
+      require(CGDisplayIsOnline(displays[i]), "extension teardown keeps local online");
+      require(CGPointEqualToPoint(CGDisplayBounds(displays[i]).origin, bounds[i].origin), "extension teardown preserves local origin");
+    }
+    require(CGDisplayIsOnline(plugged) && CGPointEqualToPoint(CGDisplayBounds(plugged).origin, restoredPlugged),
+            "extension teardown preserves right-side local origin");
     localFixture = nil;
     require(waitForRemoval(plugged), "fixture released");
     errno = 0;
