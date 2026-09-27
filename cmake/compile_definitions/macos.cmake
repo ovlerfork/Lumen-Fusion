@@ -63,6 +63,7 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/macos/display.mm"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/input.mm"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/microphone.mm"
+        "${CMAKE_SOURCE_DIR}/src/platform/macos/adaptive_display.mm"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/misc.mm"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/login_item.mm"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/misc.h"
@@ -74,6 +75,10 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/third-party/TPCircularBuffer/TPCircularBuffer.c"
         "${CMAKE_SOURCE_DIR}/third-party/TPCircularBuffer/TPCircularBuffer.h"
         ${APPLE_PLIST_FILE})
+
+set_source_files_properties(
+        "${CMAKE_SOURCE_DIR}/src/platform/macos/adaptive_display.mm"
+        PROPERTIES COMPILE_FLAGS "-fobjc-arc")
 
 # virtual_display.m uses ARC (required for CGVirtualDisplay private API lifecycle management)
 set_source_files_properties(

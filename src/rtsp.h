@@ -9,6 +9,7 @@
 
 // local includes
 #include "crypto.h"
+#include "adaptive_display.h"
 #include "thread_safe.h"
 
 namespace rtsp_stream {
@@ -16,6 +17,9 @@ namespace rtsp_stream {
 
   struct launch_session_t {
     uint32_t id;
+    adaptive_display::token desktop;
+    std::atomic_bool aborted {false};
+    std::atomic_bool started {false};
 
     crypto::aes_t gcm_key;
     crypto::aes_t iv;
@@ -42,7 +46,7 @@ namespace rtsp_stream {
     std::string client_cert;
   };
 
-  void launch_session_raise(std::shared_ptr<launch_session_t> launch_session);
+  bool launch_session_raise(std::shared_ptr<launch_session_t> launch_session);
 
   /**
    * @brief Clear state for the specified launch session.

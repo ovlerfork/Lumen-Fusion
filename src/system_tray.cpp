@@ -42,6 +42,7 @@
   // local includes
   #include "confighttp.h"
   #include "display_device.h"
+  #include "adaptive_display.h"
   #include "logging.h"
   #if defined(__APPLE__) || defined(__MACH__)
     #include "login_item.h"
@@ -101,6 +102,10 @@ namespace system_tray {
   }
 
   #if defined(__APPLE__) || defined(__MACH__)
+  void tray_desktop_status_cb([[maybe_unused]] struct tray_menu *item) {
+    adaptive_display::show_status_panel();
+  }
+
   void tray_login_item_settings_cb([[maybe_unused]] struct tray_menu *item) {
     login_item::show_settings_panel();
   }
@@ -157,6 +162,7 @@ namespace system_tray {
         {.text = "-"},
   #if defined(__APPLE__) || defined(__MACH__)
         {.text = "Launch at Login…", .cb = tray_login_item_settings_cb},
+        {.text = "Virtual Desktop…", .cb = tray_desktop_status_cb},
         {.text = "-"},
   #endif
   // Currently display device settings are only supported on Windows

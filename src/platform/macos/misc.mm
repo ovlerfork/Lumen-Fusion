@@ -42,6 +42,7 @@
 #include "misc.h"
 #include "virtual_display.h"
 #include "src/config.h"
+#include "src/adaptive_display.h"
 #include "src/entry_handler.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
@@ -375,7 +376,9 @@ namespace platf {
   }
 
   void streaming_will_stop() {
-    virtual_display_destroy();
+    if (!adaptive_display::enabled()) {
+      virtual_display_destroy();
+    }
 
     std::lock_guard lock {streaming_power_assertion_mutex};
     release_power_assertion(streaming_user_activity_assertion, "remote-user activity"sv);

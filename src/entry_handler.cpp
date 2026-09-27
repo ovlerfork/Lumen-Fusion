@@ -9,6 +9,7 @@
 #include <thread>
 
 // local includes
+#include "adaptive_display.h"
 #include "config.h"
 #include "confighttp.h"
 #include "entry_handler.h"
@@ -81,6 +82,7 @@ namespace lifetime {
   }
 
   void exit_sunshine(int exit_code, bool async) {
+    adaptive_display::close();
     // Store the exit code of the first exit_sunshine() call
     int zero = 0;
     desired_exit_code.compare_exchange_strong(zero, exit_code);

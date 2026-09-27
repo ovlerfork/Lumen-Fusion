@@ -6,6 +6,7 @@
 
 // standard includes
 #include <filesystem>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -23,6 +24,7 @@
 
 // local includes
 #include "config.h"
+#include "adaptive_display.h"
 #include "crypto.h"
 #include "display_device.h"
 #include "logging.h"
@@ -42,6 +44,10 @@
 namespace proc {
   using namespace std::literals;
   namespace pt = boost::property_tree;
+
+  namespace {
+    std::recursive_mutex lifecycle_mutex;
+  }
 
   proc_t proc;
 
@@ -136,6 +142,10 @@ namespace proc {
   }
 
   int proc_t::execute(int app_id, std::shared_ptr<rtsp_stream::launch_session_t> launch_session) {
+    std::lock_guard lock(lifecycle_mutex);
+    if (!adaptive_display::valid(launch_session->desktop)) {
+      return 503;
+    }
     // Ensure starting from a clean slate
     terminate();
 
@@ -148,6 +158,7 @@ namespace proc {
       return 404;
     }
 
+    _desktop_epoch = launch_session->desktop.epoch;
     _app_id = app_id;
     _app = *iter;
     _app_prep_begin = std::begin(_app.prep_cmds);
@@ -270,6 +281,7 @@ namespace proc {
   }
 
   int proc_t::running() {
+    std::lock_guard lock(lifecycle_mutex);
 #ifndef _WIN32
     // On POSIX OSes, we must periodically wait for our children to avoid
     // them becoming zombies. This must be synchronized carefully with
@@ -306,6 +318,11 @@ namespace proc {
   }
 
   void proc_t::terminate() {
+    std::lock_guard lock(lifecycle_mutex);
+    if (_desktop_epoch) {
+      adaptive_display::revoke(_desktop_epoch);
+      _desktop_epoch = 0;
+    }
     std::error_code ec;
     placebo = false;
     terminate_process_group(_process, _process_group, _app.exit_timeout);
@@ -376,6 +393,7 @@ namespace proc {
   }
 
   std::string proc_t::get_last_run_app_name() {
+    std::lock_guard lock(lifecycle_mutex);
     return _app.name;
   }
 
@@ -749,10 +767,14 @@ namespace proc {
   }
 
   void refresh(const std::string &file_name) {
+    std::lock_guard lock(lifecycle_mutex);
     auto proc_opt = proc::parse(file_name);
 
     if (proc_opt) {
-      proc = std::move(*proc_opt);
+      // Keep the tracked process, undo commands and desktop epoch intact when
+      // the application list is refreshed during a session or retained pause.
+      proc._apps = std::move(proc_opt->_apps);
+      proc._env = std::move(proc_opt->_env);
     }
   }
 }  // namespace proc

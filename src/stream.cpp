@@ -426,6 +426,7 @@ namespace stream {
     } control;
 
     std::uint32_t launch_session_id;
+    adaptive_display::token desktop;
     std::string client_cert;
 
     safe::mail_raw_t::event_t<bool> shutdown_event;
@@ -658,6 +659,7 @@ namespace stream {
       }
 
       // Once the control stream connection is established, RTSP session state can be torn down
+      adaptive_display::established(session_p->desktop);
       rtsp_stream::launch_session_clear(session_p->launch_session_id);
 
       session_p->control.peer = peer;
@@ -2182,6 +2184,7 @@ namespace stream {
 
   namespace session {
     std::atomic_uint running_sessions;
+    std::mutex streaming_transition_mutex;
 
     state_e state(session_t &session) {
       return session.state.load(std::memory_order_relaxed);
@@ -2226,6 +2229,12 @@ namespace stream {
       // Reset input on session stop to avoid stuck repeated keys
       BOOST_LOG(info) << "Resetting Input..."sv;
       input::reset(session.input);
+      session.input.reset();
+      // Release shared UDP/control workers before declaring an idle desktop.
+      session.broadcast_ref.release();
+
+      std::lock_guard transition(streaming_transition_mutex);
+      adaptive_display::finish(session.desktop);
 
       // If this is the last session, invoke the platform callbacks
       if (--running_sessions == 0) {
@@ -2254,6 +2263,8 @@ namespace stream {
 
       session.broadcast_ref = broadcast.ref();
       if (!session.broadcast_ref) {
+        input::reset(session.input);
+        session.input.reset();
         return -1;
       }
 
@@ -2281,6 +2292,7 @@ namespace stream {
       // Prepare the platform before allowing the capture threads to run. On
       // macOS this wakes an idle display and prevents it from sleeping for the
       // duration of the streaming session.
+      std::lock_guard transition(streaming_transition_mutex);
       if (++running_sessions == 1) {
         platf::streaming_will_start();
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
@@ -2300,6 +2312,7 @@ namespace stream {
 
       session->shutdown_event = mail->event<bool>(mail::shutdown);
       session->launch_session_id = launch_session.id;
+      session->desktop = launch_session.desktop;
       session->client_cert = launch_session.client_cert;
 
       session->config = config;

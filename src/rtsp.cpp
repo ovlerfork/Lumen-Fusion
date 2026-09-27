@@ -93,6 +93,14 @@ namespace rtsp_stream {
         sock {io_context} {
     }
 
+    ~socket_t() {
+      // Successful RTSP requests deliberately use separate TCP connections.
+      if (session && !handled && !session->started.load()) {
+        session->aborted = true;
+        adaptive_display::abort(session->desktop);
+      }
+    }
+
     /**
      * @brief Queue an asynchronous read to begin the next message.
      */
@@ -383,11 +391,13 @@ namespace rtsp_stream {
     }
 
     void handle_data(msg_t &&req) {
+      handled = true;
       handle_data_fn(sock, *session, std::move(req));
     }
 
     std::function<void(tcp::socket &sock, launch_session_t &, msg_t &&)> handle_data_fn;
 
+    bool handled = false;
     tcp::socket sock;
 
     std::array<char, 2048> msg_buf;
@@ -463,7 +473,11 @@ namespace rtsp_stream {
 
       auto socket = std::move(next_socket);
 
-      auto launch_session {launch_event.view(0s)};
+      std::shared_ptr<launch_session_t> launch_session;
+      {
+        std::lock_guard lock(pending_mutex);
+        launch_session = launch_event;
+      }
       if (launch_session) {
         // Associate the current RTSP session with this socket and start reading
         socket->session = launch_session;
@@ -496,42 +510,64 @@ namespace rtsp_stream {
      *       the session will be discarded.
      * @param launch_session Streaming session information.
      */
-    void session_raise(std::shared_ptr<launch_session_t> launch_session) {
-      // If a launch event is still pending, don't overwrite it.
-      if (launch_event.view(0s)) {
-        return;
+    bool session_raise(std::shared_ptr<launch_session_t> launch_session) {
+      std::lock_guard lock(pending_mutex);
+      if (mail::man->event<bool>(mail::shutdown)->peek() || !adaptive_display::valid(launch_session->desktop) ||
+          (launch_event && !launch_event->aborted.load())) {
+        return false;
       }
-
-      // Raise the new launch session to prepare for the RTSP handshake
-      launch_event.raise(std::move(launch_session));
-
-      // Arm the timer to expire this launch session if the client times out
-      raised_timer.expires_after(config::stream.ping_timeout);
-      raised_timer.async_wait([this](const boost::system::error_code &ec) {
-        if (!ec) {
-          auto discarded = launch_event.pop(0s);
-          if (discarded) {
-            BOOST_LOG(debug) << "Event timeout: "sv << discarded->unique_id;
-          }
+      launch_event = launch_session;
+      // Timer objects are touched only by the IO executor. The pending mutex
+      // serializes admission, conditional extraction and timer installation.
+      const auto deadline = std::chrono::steady_clock::now() + config::stream.ping_timeout;
+      boost::asio::post(io_context, [this, launch_session, deadline] {
+        std::lock_guard lock(pending_mutex);
+        if (launch_event != launch_session) {
+          return;
         }
+        raised_timer.expires_at(deadline);
+        raised_timer.async_wait([this, launch_session](const boost::system::error_code &ec) {
+          if (ec) {
+            return;
+          }
+          bool abort = false;
+          {
+            std::lock_guard lock(pending_mutex);
+            if (launch_event != launch_session) {
+              return;
+            }
+            launch_event.reset();
+            abort = !launch_session->started.load();
+            if (abort) {
+              launch_session->aborted = true;
+            }
+          }
+          if (abort) {
+            adaptive_display::abort(launch_session->desktop);
+          }
+        });
       });
+      return true;
     }
 
-    /**
-     * @brief Clear state for the oldest launch session.
-     * @param launch_session_id The ID of the session to clear.
-     */
-    void session_clear(uint32_t launch_session_id) {
-      // We currently only support a single pending RTSP session,
-      // so the ID should always match the one for that session.
-      auto launch_session = launch_event.view(0s);
-      if (launch_session) {
-        if (launch_session->id != launch_session_id) {
-          BOOST_LOG(error) << "Attempted to clear unexpected session: "sv << launch_session_id << " vs "sv << launch_session->id;
-        } else {
-          raised_timer.cancel();
-          launch_event.pop();
+    void session_clear(uint32_t id) {
+      std::lock_guard lock(pending_mutex);
+      if (launch_event && launch_event->id == id) {
+        launch_event.reset();
+      }
+    }
+
+    void cancel_pending() {
+      std::shared_ptr<launch_session_t> old;
+      {
+        std::lock_guard lock(pending_mutex);
+        old = std::move(launch_event);
+        if (old) {
+          old->aborted = true;
         }
+      }
+      if (old) {
+        adaptive_display::abort(old->desktop);
       }
     }
 
@@ -541,10 +577,11 @@ namespace rtsp_stream {
      */
     int session_count() {
       auto lg = _session_slots.lock();
-      return (int) _session_slots->size();
+      return (int) (_session_slots->size() + draining_sessions);
     }
 
-    safe::event_t<std::shared_ptr<launch_session_t>> launch_event;
+    std::mutex pending_mutex;
+    std::shared_ptr<launch_session_t> launch_event;
 
     /**
      * @brief Clear launch sessions.
@@ -554,52 +591,65 @@ namespace rtsp_stream {
      * @examples_end
      */
     void clear(bool all = true) {
-      auto lg = _session_slots.lock();
-
-      for (auto i = _session_slots->begin(); i != _session_slots->end();) {
-        auto &slot = *(*i);
-        if (all || stream::session::state(slot) == stream::session::state_e::STOPPING) {
-          stream::session::stop(slot);
-          stream::session::join(slot);
-
-          i = _session_slots->erase(i);
-        } else {
-          i++;
+      std::vector<std::shared_ptr<stream::session_t>> draining;
+      {
+        auto lg = _session_slots.lock();
+        for (auto i = _session_slots->begin(); i != _session_slots->end();) {
+          if (all || stream::session::state(**i) == stream::session::state_e::STOPPING) {
+            draining.push_back(*i);
+            i = _session_slots->erase(i);
+          } else {
+            ++i;
+          }
         }
+        draining_sessions += draining.size();
       }
+      drain(std::move(draining));
     }
 
     void clear_by_cert(std::string_view cert) {
-      auto lg = _session_slots.lock();
-      for (auto i = _session_slots->begin(); i != _session_slots->end();) {
-        auto &slot = *(*i);
-        if (stream::session::client_cert(slot) == cert) {
-          stream::session::stop(slot);
-          stream::session::join(slot);
-          i = _session_slots->erase(i);
-        } else {
-          i++;
+      std::vector<std::shared_ptr<stream::session_t>> draining;
+      {
+        auto lg = _session_slots.lock();
+        for (auto i = _session_slots->begin(); i != _session_slots->end();) {
+          if (stream::session::client_cert(**i) == cert) {
+            draining.push_back(*i);
+            i = _session_slots->erase(i);
+          } else {
+            ++i;
+          }
         }
+        draining_sessions += draining.size();
+      }
+      drain(std::move(draining));
+    }
+
+    void drain(std::vector<std::shared_ptr<stream::session_t>> draining) {
+      // Native teardown and media joins never run under the slot lock. Keep
+      // draining clients in the count so HTTP cannot probe over live capture.
+      for (auto &slot : draining) {
+        stream::session::stop(*slot);
+        stream::session::join(*slot);
+        auto lg = _session_slots.lock();
+        --draining_sessions;
       }
     }
 
-    /**
-     * @brief Removes the provided session from the set of sessions.
-     * @param session The session to remove.
-     */
-    void remove(const std::shared_ptr<stream::session_t> &session) {
+    bool start_session(const std::shared_ptr<stream::session_t> &stream_session,
+                       launch_session_t &launch, const std::string &address) {
       auto lg = _session_slots.lock();
-      _session_slots->erase(session);
-    }
-
-    /**
-     * @brief Inserts the provided session into the set of sessions.
-     * @param session The session to insert.
-     */
-    void insert(const std::shared_ptr<stream::session_t> &session) {
-      auto lg = _session_slots.lock();
-      _session_slots->emplace(session);
-      BOOST_LOG(info) << "New streaming session started [active sessions: "sv << _session_slots->size() << ']';
+      if (launch.aborted || launch.started.exchange(true) ||
+          mail::man->event<bool>(mail::shutdown)->peek() || !adaptive_display::activate(launch.desktop)) {
+        return false;
+      }
+      // Publishing the slot and starting it are one operation relative to
+      // cancellation's drain. Revocation happens before cancellation takes this lock.
+      _session_slots->emplace(stream_session);
+      if (stream::session::start(*stream_session, address)) {
+        _session_slots->erase(stream_session);
+        return false;
+      }
+      return true;
     }
 
     /**
@@ -628,6 +678,7 @@ namespace rtsp_stream {
     std::unordered_map<std::string_view, cmd_func_t> _map_cmd_cb;
 
     sync_util::sync_t<std::set<std::shared_ptr<stream::session_t>>> _session_slots;
+    size_t draining_sessions = 0;
 
     boost::asio::io_context io_context;
     tcp::acceptor acceptor {io_context};
@@ -638,8 +689,8 @@ namespace rtsp_stream {
 
   rtsp_server_t server {};
 
-  void launch_session_raise(std::shared_ptr<launch_session_t> launch_session) {
-    server.session_raise(std::move(launch_session));
+  bool launch_session_raise(std::shared_ptr<launch_session_t> launch_session) {
+    return server.session_raise(std::move(launch_session));
   }
 
   void launch_session_clear(uint32_t launch_session_id) {
@@ -654,6 +705,7 @@ namespace rtsp_stream {
   }
 
   void terminate_sessions() {
+    server.cancel_pending();
     server.clear(true);
   }
 
@@ -678,6 +730,12 @@ namespace rtsp_stream {
   }
 
   void respond(tcp::socket &sock, launch_session_t &session, msg_t &resp) {
+    auto failed_write = util::fail_guard([&] {
+      if (!session.started.load()) {
+        session.aborted = true;
+        adaptive_display::abort(session.desktop);
+      }
+    });
     auto payload = std::make_pair(resp->payload, resp->payloadLength);
 
     // Restore response message for proper destruction
@@ -731,7 +789,9 @@ namespace rtsp_stream {
       session.rtsp_cipher->encrypt(std::string_view {(const char *) header->payload(), (std::size_t) payload_length}, header->tag, &iv);
 
       // Send the full encrypted message
-      send(sock, std::string_view {(char *) message.data(), message.size()});
+      if (send(sock, std::string_view {(char *) message.data(), message.size()})) {
+        return;
+      }
     } else {
       std::string_view tmp_resp {raw_resp.get(), (size_t) serialized_len};
 
@@ -741,11 +801,18 @@ namespace rtsp_stream {
       }
 
       // Send the plaintext RTSP message payload (if present)
-      send(sock, std::string_view {payload.first, (std::size_t) payload.second});
+      if (send(sock, std::string_view {payload.first, (std::size_t) payload.second})) {
+        return;
+      }
     }
+    failed_write.disable();
   }
 
   void respond(tcp::socket &sock, launch_session_t &session, POPTION_ITEM options, int statuscode, const char *status_msg, int seqn, const std::string_view &payload) {
+    if (statuscode >= 400 && !session.started.load()) {
+      session.aborted = true;
+      adaptive_display::abort(session.desktop);
+    }
     msg_t resp {new msg_t::element_type};
     createRtspResponse(resp.get(), nullptr, 0, const_cast<char *>("RTSP/1.0"), statuscode, const_cast<char *>(status_msg), seqn, options, const_cast<char *>(payload.data()), (int) payload.size());
 
@@ -911,6 +978,10 @@ namespace rtsp_stream {
   }
 
   void cmd_announce(rtsp_server_t *server, tcp::socket &sock, launch_session_t &session, msg_t &&req) {
+    if (session.aborted || session.started) {
+      respond(sock, session, nullptr, 503, "Session no longer pending", req->sequenceNumber, {});
+      return;
+    }
     OPTION_ITEM option {};
 
     // I know these string literals will not be modified
@@ -1140,12 +1211,12 @@ namespace rtsp_stream {
     }
 
     auto stream_session = stream::session::alloc(config, session);
-    server->insert(stream_session);
-
-    if (stream::session::start(*stream_session, sock.remote_endpoint().address().to_string())) {
+    if (!server->start_session(stream_session, session, sock.remote_endpoint().address().to_string())) {
       BOOST_LOG(error) << "Failed to start a streaming session"sv;
 
-      server->remove(stream_session);
+      stream_session.reset();
+      adaptive_display::finish(session.desktop);
+      session.aborted = true;
       respond(sock, session, &option, 500, "Internal Server Error", req->sequenceNumber, {});
       return;
     }
@@ -1204,6 +1275,9 @@ namespace rtsp_stream {
     // Wait for shutdown
     shutdown_event->view();
 
+    // Revoke admission before draining even when shutdown bypassed the tray.
+    adaptive_display::close();
+    server.cancel_pending();
     // Stop the server and join the server thread
     server.stop();
     rtsp_thread.join();

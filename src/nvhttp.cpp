@@ -22,6 +22,7 @@
 // local includes
 #include "config.h"
 #include "display_device.h"
+#include "adaptive_display.h"
 #include "file_handler.h"
 #include "globals.h"
 #include "httpcommon.h"
@@ -872,6 +873,16 @@ namespace nvhttp {
 
     host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     auto launch_session = make_launch_session(host_audio, args);
+    auto desktop_abort = util::fail_guard([&] { adaptive_display::abort(launch_session->desktop); });
+    if (adaptive_display::enabled()) {
+      launch_session->desktop = adaptive_display::prepare(true, launch_session->width, launch_session->height, launch_session->fps);
+      if (!launch_session->desktop) {
+        tree.put("root.<xmlattr>.status_code", 503);
+        tree.put("root.<xmlattr>.status_message", "Virtual desktop preparation failed; check display topology or local override");
+        tree.put("root.gamesession", 0);
+        return;
+      }
+    }
 
     if (rtsp_stream::session_count() == 0) {
       // The display should be restored in case something fails as there are no other sessions.
@@ -895,10 +906,9 @@ namespace nvhttp {
         return;
       }
 
-      // Create virtual display after encoder probing succeeds (macOS).
-      // Must happen after probe_encoders() because the virtual display
-      // can't be captured during the encoder test phase.
-      display_device::create_virtual_display(config::video, *launch_session);
+      if (!launch_session->desktop) {
+        display_device::create_virtual_display(config::video, *launch_session);
+      }
     }
 
     auto encryption_mode = net::encryption_mode_for_address(request->remote_endpoint().address());
@@ -935,7 +945,14 @@ namespace nvhttp {
     );
     tree.put("root.gamesession", 1);
 
-    rtsp_stream::launch_session_raise(launch_session);
+    if (!rtsp_stream::launch_session_raise(launch_session)) {
+      tree.put("root.<xmlattr>.status_code", 503);
+      tree.put("root.<xmlattr>.status_message", "Another RTSP preparation is pending or shutdown has begun");
+      tree.put("root.gamesession", 0);
+      tree.put("root.resume", 0);
+      return;
+    }
+    desktop_abort.disable();
 
     // Stream was started successfully, we will revert the config when the app or session terminates
     revert_display_configuration = false;
@@ -986,6 +1003,16 @@ namespace nvhttp {
       host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     }
     const auto launch_session = make_launch_session(host_audio, args);
+    auto desktop_abort = util::fail_guard([&] { adaptive_display::abort(launch_session->desktop); });
+    if (adaptive_display::enabled()) {
+      launch_session->desktop = adaptive_display::prepare(false, launch_session->width, launch_session->height, launch_session->fps);
+      if (!launch_session->desktop) {
+        tree.put("root.<xmlattr>.status_code", 503);
+        tree.put("root.<xmlattr>.status_message", "Virtual desktop Resume refused");
+        tree.put("root.resume", 0);
+        return;
+      }
+    }
 
     if (no_active_sessions) {
       // We want to prepare display only if there are no active sessions at
@@ -1006,8 +1033,9 @@ namespace nvhttp {
         return;
       }
 
-      // Create virtual display after encoder probing succeeds (macOS)
-      display_device::create_virtual_display(config::video, *launch_session);
+      if (!launch_session->desktop) {
+        display_device::create_virtual_display(config::video, *launch_session);
+      }
     }
 
     auto encryption_mode = net::encryption_mode_for_address(request->remote_endpoint().address());
@@ -1033,7 +1061,14 @@ namespace nvhttp {
     );
     tree.put("root.resume", 1);
 
-    rtsp_stream::launch_session_raise(launch_session);
+    if (!rtsp_stream::launch_session_raise(launch_session)) {
+      tree.put("root.<xmlattr>.status_code", 503);
+      tree.put("root.<xmlattr>.status_message", "Another RTSP preparation is pending or shutdown has begun");
+      tree.put("root.gamesession", 0);
+      tree.put("root.resume", 0);
+      return;
+    }
+    desktop_abort.disable();
   }
 
   void cancel(resp_https_t response, req_https_t request) {
@@ -1051,6 +1086,7 @@ namespace nvhttp {
     tree.put("root.cancel", 1);
     tree.put("root.<xmlattr>.status_code", 200);
 
+    adaptive_display::revoke();
     rtsp_stream::terminate_sessions();
 
     if (proc::proc.running() > 0) {

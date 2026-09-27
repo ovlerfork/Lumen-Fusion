@@ -11,6 +11,7 @@
 // local includes
 #include "confighttp.h"
 #include "display_device.h"
+#include "adaptive_display.h"
 #include "entry_handler.h"
 #include "globals.h"
 #include "httpcommon.h"
@@ -281,6 +282,7 @@ static int run_main(int argc, char *argv[]) {
 #endif
 
   task_pool.start(1);
+  auto desktop_shutdown = util::fail_guard([] { adaptive_display::shutdown(); });
 
   // Create signal handler after logging has been initialized
   auto shutdown_event = mail::man->event<bool>(mail::shutdown);
@@ -291,6 +293,7 @@ static int run_main(int argc, char *argv[]) {
       return;
     }
     shutdown_started = true;
+    adaptive_display::close();
 
     BOOST_LOG(info) << message;
 
@@ -446,9 +449,11 @@ static int run_main(int argc, char *argv[]) {
 
   mainThreadLoop(shutdown_event);
 
+  adaptive_display::close();
   httpThread.join();
   configThread.join();
   rtspThread.join();
+  adaptive_display::shutdown();
 
 #if defined(__APPLE__) || defined(__MACH__)
   // Join callbacks before stopping the pool and before captured locals unwind.

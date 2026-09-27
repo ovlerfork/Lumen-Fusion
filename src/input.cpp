@@ -9,6 +9,7 @@ extern "C" {
 }
 
 // standard includes
+#include <atomic>
 #include <bitset>
 #include <chrono>
 #include <cmath>
@@ -191,6 +192,8 @@ namespace input {
     std::mutex input_queue_lock;
 
     thread_pool_util::ThreadPool::task_id_t mouse_left_button_timeout;
+    thread_pool_util::ThreadPool::task_id_t connection_activity = nullptr;
+    std::atomic_bool stopped {false};
 
     input::touch_port_t touch_port;
 
@@ -1528,6 +1531,9 @@ namespace input {
    * @param input The input context pointer.
    */
   void passthrough_next_message(std::shared_ptr<input_t> input) {
+    if (input->stopped) {
+      return;
+    }
     // 'entry' backs the 'payload' pointer, so they must remain in scope together
     std::vector<uint8_t> entry;
     PNV_INPUT_HEADER payload;
@@ -1626,6 +1632,9 @@ namespace input {
    * @param input_data The input message.
    */
   void passthrough(std::shared_ptr<input_t> &input, std::vector<std::uint8_t> &&input_data) {
+    if (input->stopped) {
+      return;
+    }
     // Fast path: for gamepad state updates on already-allocated gamepads,
     // send the HID report directly on the control stream thread to avoid
     // task pool queuing latency (~5-15ms). Only handles pure state updates;
@@ -1668,11 +1677,19 @@ namespace input {
   }
 
   void reset(std::shared_ptr<input_t> &input) {
-    task_pool.cancel(key_press_repeat_id);
-    task_pool.cancel(input->mouse_left_button_timeout);
-
-    // Ensure input is synchronous, by using the task_pool
-    task_pool.push([]() {
+    input->stopped = true;
+    task_pool.cancel(input->connection_activity);
+    // Drain prior input before releasing held state and cancelling delayed work.
+    task_pool.push([input]() {
+      task_pool.cancel(key_press_repeat_id);
+      task_pool.cancel(input->mouse_left_button_timeout);
+      for (auto &gamepad : input->gamepads) {
+        task_pool.cancel(gamepad.back_timeout_id);
+        if (gamepad.id >= 0) {
+          free_gamepad(platf_input, gamepad.id);
+          gamepad.id = -1;
+        }
+      }
       for (int x = 0; x < mouse_press.size(); ++x) {
         if (mouse_press[x]) {
           platf::button_mouse(platf_input, x, true);
@@ -1688,7 +1705,7 @@ namespace input {
         platf::keyboard_update(platf_input, vk_from_kpid(kp.first) & 0x00FF, true, flags_from_kpid(kp.first));
         key_press[kp.first] = false;
       }
-    });
+    }).wait();
   }
 
   class deinit_t: public platf::deinit_t {
@@ -1722,11 +1739,15 @@ namespace input {
     );
 
     // Workaround to ensure new frames will be captured when a client connects
-    task_pool.pushDelayed([]() {
+    input->connection_activity = task_pool.pushDelayed([weak = std::weak_ptr<input_t>(input)]() {
+      auto input = weak.lock();
+      if (!input || input->stopped) {
+        return;
+      }
       platf::move_mouse(platf_input, 1, 1);
       platf::move_mouse(platf_input, -1, -1);
     },
-                          100ms);
+                          100ms).task_id;
 
     return input;
   }

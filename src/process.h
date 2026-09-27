@@ -98,11 +98,14 @@ namespace proc {
     void terminate();
 
   private:
-    int _app_id;
+    friend void refresh(const std::string &file_name);
+
+    int _app_id = 0;
+    uint64_t _desktop_epoch = 0;
 
     boost::process::v1::environment _env;
     std::vector<ctx_t> _apps;
-    ctx_t _app;
+    ctx_t _app {};
     std::chrono::steady_clock::time_point _app_launch_time;
 
     // If no command associated with _app_id, yet it's still running

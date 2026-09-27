@@ -1,0 +1,315 @@
+#include <gtest/gtest.h>
+#include "src/adaptive_display.h"
+
+using namespace adaptive_display;
+using namespace std::chrono_literals;
+
+namespace {
+  class AdaptiveDesktop: public testing::Test {
+  protected:
+    topology detected {presence::absent, 0, power_source::external};
+    uint32_t resource = 0, next_id = 10;
+    bool helper_ok = true, create_ok = true, layout_ok = true;
+    std::string arrangement, power = "none";
+    mode actual {};
+    controller desktop {{
+      [this](uint32_t) { return detected; },
+      [this](mode m, const char *layout) {
+        if (!create_ok) {
+          return uint32_t(0);
+        }
+        actual = m;
+        arrangement = layout;
+        return resource = ++next_id;
+      },
+      [this](const char *layout, uint32_t) {
+        if (!layout_ok) {
+          return false;
+        }
+        arrangement = layout;
+        return true;
+      },
+      [this](uint32_t id) { return helper_ok && resource && resource == id; },
+      [this] { resource = 0; },
+      [this](const std::string &kind) { power = kind; }
+    }};
+    controller::clock::time_point now {};
+    policy rules;
+    token prepare(bool launch = true) { return desktop.prepare(launch, {1920, 1080, 60}, rules, now); }
+    token connect() {
+      auto t = prepare();
+      EXPECT_TRUE(desktop.activate(t));
+      desktop.established(t);
+      return t;
+    }
+    uint32_t pause() {
+      auto t = connect();
+      desktop.finish(t, now);
+      return resource;
+    }
+  };
+}
+
+TEST_F(AdaptiveDesktop, HeadlessPauseReusesDesktopAndPreservesMode) {
+  auto id = pause();
+  ASSERT_NE(id, 0);
+  EXPECT_EQ(arrangement, "primary");
+  EXPECT_EQ(power, "display");
+  auto resumed = desktop.prepare(false, {2560, 1600, 120}, rules, now + 10s);
+  ASSERT_TRUE(resumed);
+  EXPECT_EQ(resource, id);
+  EXPECT_EQ(actual, (mode {1920, 1080, 60}));
+  EXPECT_TRUE(desktop.activate(resumed));
+  desktop.established(resumed);
+  desktop.finish(resumed, now + 20s);
+  EXPECT_EQ(resource, id);
+  EXPECT_EQ(desktop.snapshot().deadline, now + 620s);
+}
+
+TEST_F(AdaptiveDesktop, LocalDisconnectRemovesAndFixedPrimaryNeverRetains) {
+  detected.local = presence::present;
+  auto t = connect();
+  EXPECT_EQ(arrangement, "extend");
+  desktop.finish(t, now);
+  EXPECT_EQ(resource, 0);
+  rules.adaptive = false;
+  t = connect();
+  EXPECT_EQ(arrangement, "primary");
+  desktop.finish(t, now);
+  EXPECT_EQ(resource, 0);
+}
+
+TEST_F(AdaptiveDesktop, LocalRetentionAndHeadlessRemovalPolicies) {
+  detected.local = presence::present;
+  rules.local_retain = true;
+  EXPECT_NE(pause(), 0);
+  desktop.revoke();
+  detected.local = presence::absent;
+  rules.headless_retain = false;
+  EXPECT_EQ(pause(), 0);
+}
+
+TEST_F(AdaptiveDesktop, UnknownInitialTopologyRequiresOverrideButPreservesRetainedRole) {
+  detected.local = presence::unknown;
+  EXPECT_FALSE(prepare());
+  EXPECT_EQ(resource, 0);
+  rules.override_local = presence::absent;
+  EXPECT_NE(pause(), 0);
+  desktop.revoke();
+  rules.override_local = presence::unknown;
+  detected.local = presence::absent;
+  auto id = pause();
+  detected.local = presence::unknown;
+  desktop.reconcile(now + 3s);
+  EXPECT_EQ(resource, id);
+  EXPECT_EQ(arrangement, "primary");
+}
+
+TEST_F(AdaptiveDesktop, BatteryOptInAndUnknownPowerNeverGrantIndefiniteRetention) {
+  detected.power = power_source::battery;
+  EXPECT_EQ(pause(), 0);
+  rules.on_battery = true;
+  EXPECT_NE(pause(), 0);
+  desktop.revoke();
+  rules.retention = 0s;
+  detected.power = power_source::unknown;
+  EXPECT_EQ(pause(), 0);
+}
+
+TEST_F(AdaptiveDesktop, FailedInitialPreparationAndHandshakeReleaseResource) {
+  create_ok = false;
+  EXPECT_FALSE(prepare());
+  EXPECT_EQ(resource, 0);
+  create_ok = true;
+  layout_ok = false;
+  EXPECT_FALSE(prepare());
+  EXPECT_EQ(resource, 0);
+  layout_ok = true;
+  auto t = prepare();
+  ASSERT_TRUE(t);
+  desktop.abort(t, now);
+  EXPECT_EQ(resource, 0);
+  t = prepare();
+  ASSERT_TRUE(desktop.activate(t));
+  desktop.finish(t, now); // No established control handshake.
+  EXPECT_EQ(resource, 0);
+}
+
+TEST_F(AdaptiveDesktop, FailedResumeRestoresOriginalDeadlineIncludingExpiredAttempt) {
+  const auto id = pause();
+  now += 590s;
+  auto t = prepare(false);
+  desktop.abort(t, now);
+  EXPECT_EQ(resource, id);
+  EXPECT_EQ(desktop.snapshot().deadline, controller::clock::time_point {} + 600s);
+  t = prepare(false);
+  desktop.reconcile(now + 20s); // Preparation pins it past the old deadline.
+  EXPECT_EQ(resource, id);
+  desktop.abort(t, now + 20s);
+  EXPECT_EQ(resource, 0);
+}
+
+TEST_F(AdaptiveDesktop, FailedIndefiniteResumeRestoresExistingPause) {
+  rules.retention = 0s;
+  auto id = pause();
+  auto t = prepare(false);
+  ASSERT_TRUE(desktop.activate(t));
+  desktop.finish(t, now + 1000s);
+  EXPECT_EQ(resource, id);
+  EXPECT_TRUE(desktop.snapshot().paused);
+  EXPECT_FALSE(desktop.snapshot().deadline);
+}
+
+TEST_F(AdaptiveDesktop, PendingAndActiveClientsPinSharedResource) {
+  auto a = connect();
+  auto id = resource;
+  auto b = prepare(false);
+  desktop.finish(a, now);
+  EXPECT_EQ(resource, id);
+  EXPECT_FALSE(desktop.release_inactive());
+  ASSERT_TRUE(desktop.activate(b));
+  desktop.established(b);
+  auto c = prepare(false);
+  ASSERT_TRUE(desktop.activate(c));
+  desktop.established(c);
+  desktop.finish(b, now);
+  EXPECT_EQ(desktop.snapshot().active, 1);
+  desktop.finish(c, now);
+  EXPECT_TRUE(desktop.snapshot().paused);
+  EXPECT_EQ(resource, id);
+}
+
+TEST_F(AdaptiveDesktop, CancelRevokesBeforeDrainAndLateJoinCannotRetain) {
+  auto a = connect();
+  auto b = prepare(false);
+  auto id = resource;
+  desktop.revoke();
+  EXPECT_FALSE(desktop.activate(b));
+  EXPECT_FALSE(prepare(false));
+  EXPECT_EQ(resource, id); // Media owner has not drained yet.
+  desktop.finish(a, now);
+  EXPECT_EQ(resource, 0);
+  desktop.finish(a, now);
+  EXPECT_FALSE(desktop.snapshot().paused);
+  auto next = prepare();
+  ASSERT_TRUE(next);
+  desktop.revoke(a.epoch); // Old process cleanup cannot revoke the next app.
+  EXPECT_TRUE(desktop.valid(next));
+}
+
+TEST_F(AdaptiveDesktop, ExpiryCannotDestroyAReservedResumeOrItsReplacement) {
+  auto id = pause();
+  now += 599s;
+  auto t = prepare(false);
+  desktop.reconcile(now + 2s);
+  EXPECT_EQ(resource, id);
+  ASSERT_TRUE(desktop.activate(t));
+  desktop.established(t);
+  desktop.finish(t, now + 2s);
+  desktop.reconcile(now + 3s);
+  EXPECT_EQ(resource, id);
+  now += 602s;
+  desktop.reconcile(now);
+  EXPECT_EQ(resource, 0);
+  t = prepare(false);
+  ASSERT_TRUE(t);
+  EXPECT_NE(resource, id);
+  desktop.reconcile(now + 1s);
+  EXPECT_NE(resource, 0);
+}
+
+TEST_F(AdaptiveDesktop, ReturningLocalDisplayMustRemainAvailableBeforeRemoval) {
+  auto id = pause();
+  detected.local = presence::present;
+  detected.local_main = 1;
+  desktop.reconcile(now);
+  EXPECT_EQ(resource, id);
+  detected.local = presence::unknown;
+  desktop.reconcile(now + 1s);
+  EXPECT_EQ(resource, id);
+  detected.local = presence::present;
+  desktop.reconcile(now + 2s);
+  EXPECT_EQ(resource, id);
+  desktop.reconcile(now + 4s);
+  EXPECT_EQ(resource, 0);
+}
+
+TEST_F(AdaptiveDesktop, LocalReturnChangesActiveRoleWithoutDestroyingDesktop) {
+  auto t = connect();
+  auto id = resource;
+  detected.local = presence::present;
+  detected.local_main = 1;
+  desktop.reconcile(now);
+  desktop.reconcile(now + 2s);
+  EXPECT_EQ(resource, id);
+  EXPECT_EQ(arrangement, "extend");
+  desktop.finish(t, now + 3s);
+  EXPECT_EQ(resource, 0);
+}
+
+TEST_F(AdaptiveDesktop, HelperLossAndPowerDisallowReleasePausedResources) {
+  pause();
+  helper_ok = false;
+  desktop.reconcile(now);
+  EXPECT_EQ(resource, 0);
+  EXPECT_EQ(power, "none");
+  helper_ok = true;
+  pause();
+  detected.power = power_source::battery;
+  desktop.reconcile(now);
+  EXPECT_EQ(resource, 0);
+  EXPECT_EQ(power, "none");
+}
+
+TEST_F(AdaptiveDesktop, ExplicitReleaseAndShutdownCloseIdleAndPendingOwnership) {
+  pause();
+  EXPECT_TRUE(desktop.release_inactive());
+  EXPECT_EQ(resource, 0);
+  auto t = prepare(false);
+  ASSERT_TRUE(t);
+  EXPECT_FALSE(desktop.release_inactive());
+  desktop.close();
+  EXPECT_EQ(resource, 0);
+  EXPECT_FALSE(desktop.activate(t));
+  EXPECT_FALSE(prepare());
+  EXPECT_EQ(power, "none");
+}
+
+TEST_F(AdaptiveDesktop, HelperFailureWaitsForActiveDrainBeforeRecreation) {
+  auto t = connect();
+  auto id = resource;
+  helper_ok = false;
+  desktop.reconcile(now);
+  EXPECT_EQ(resource, id);
+  EXPECT_FALSE(desktop.valid(t));
+  EXPECT_FALSE(prepare(false));
+  desktop.finish(t, now);
+  EXPECT_EQ(resource, 0);
+  helper_ok = true;
+  auto resumed = prepare(false);
+  EXPECT_TRUE(resumed);
+  EXPECT_NE(resource, id);
+}
+
+TEST_F(AdaptiveDesktop, ShutdownDoesNotDestroyAnUndrainedActiveDesktop) {
+  auto t = connect();
+  auto id = resource;
+  desktop.close();
+  EXPECT_EQ(resource, id);
+  desktop.established(t);
+  desktop.finish(t, now);
+  EXPECT_EQ(resource, 0);
+  EXPECT_FALSE(desktop.snapshot().paused);
+  EXPECT_FALSE(prepare());
+}
+
+TEST_F(AdaptiveDesktop, PresentOverrideSelectsExtensionAndNonePowerRetainsWithoutAssertion) {
+  detected.local = presence::unknown;
+  rules.override_local = presence::present;
+  rules.local_retain = true;
+  rules.power = "none";
+  EXPECT_NE(pause(), 0);
+  EXPECT_EQ(arrangement, "extend");
+  EXPECT_EQ(power, "none");
+  EXPECT_TRUE(desktop.snapshot().paused);
+}
