@@ -20,6 +20,7 @@ namespace adaptive_display {
   struct topology {
     presence local = presence::unknown;
     uint32_t local_main = 0;
+    uint32_t main_display = 0;
   };
   struct policy {
     bool adaptive = true;

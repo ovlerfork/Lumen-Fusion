@@ -9,6 +9,7 @@ namespace {
   protected:
     topology detected {presence::absent, 0};
     uint32_t resource = 0, next_id = 10;
+    int layout_calls = 0;
     bool helper_ok = true, create_ok = true, layout_ok = true, target_ready = true;
     std::string arrangement, power = "none";
     mode actual {};
@@ -23,6 +24,7 @@ namespace {
         return resource = ++next_id;
       },
       [this](const char *layout, uint32_t) {
+        ++layout_calls;
         if (!layout_ok) {
           return false;
         }
@@ -78,6 +80,42 @@ TEST_F(AdaptiveDesktop, LocalDisconnectRemovesAndFixedPrimaryNeverRetains) {
   EXPECT_EQ(arrangement, "primary");
   desktop.finish(t, now);
   EXPECT_EQ(resource, 0);
+}
+
+TEST_F(AdaptiveDesktop, HeadlessPrimaryDriftIsRepairedWithoutRecreation) {
+  const auto id = pause();
+  ASSERT_NE(id, 0);
+  detected.main_display = 99; // An unusable local display became main during hotplug.
+  arrangement = "changed by system";
+  layout_ok = false;
+  desktop.reconcile();
+  EXPECT_EQ(resource, id);
+  EXPECT_EQ(power, "display");
+  layout_ok = true;
+  desktop.reconcile();
+  EXPECT_EQ(arrangement, "primary");
+  EXPECT_EQ(resource, id);
+  detected.main_display = id;
+  const auto calls = layout_calls;
+  desktop.reconcile();
+  EXPECT_EQ(layout_calls, calls); // No repeated reconfiguration when already correct.
+}
+
+TEST_F(AdaptiveDesktop, LocalPrimaryDriftIsRepairedDuringActiveStream) {
+  detected = {presence::present, 42, 42};
+  const auto t = connect();
+  const auto id = resource;
+  detected.main_display = id;
+  arrangement = "changed by system";
+  desktop.reconcile();
+  EXPECT_EQ(arrangement, "extend");
+  EXPECT_EQ(resource, id);
+  EXPECT_TRUE(desktop.valid(t));
+  EXPECT_EQ(desktop.snapshot().active, 1);
+  detected.main_display = 42;
+  const auto calls = layout_calls;
+  desktop.reconcile();
+  EXPECT_EQ(layout_calls, calls);
 }
 
 TEST_F(AdaptiveDesktop, LocalRetentionAndHeadlessRemovalPolicies) {

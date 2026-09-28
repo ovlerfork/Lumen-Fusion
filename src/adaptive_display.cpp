@@ -22,7 +22,11 @@ namespace adaptive_display {
     if (t.local == presence::unknown) {
       return false;
     }
-    if (role != t.local || local_main != t.local_main) {
+    const auto expected_main = t.local == presence::present ? t.local_main : display;
+    // macOS can change the main display during hotplug without changing which
+    // local displays are usable. Repair that drift without recreating the VD.
+    const bool main_changed = t.main_display && expected_main && t.main_display != expected_main;
+    if (role != t.local || local_main != t.local_main || main_changed) {
       if (!native.layout(t.local == presence::present ? "extend" : "primary", t.local_main)) {
         if (!native.healthy(display)) {
           helper_failed = true;

@@ -949,7 +949,12 @@ int main(int argc, char **argv) {
             "removed stale mirror master is not a target and does not release owned VD");
     staleMaster = 0;
     require(virtual_display_get_target_id() == id, "fresh target recovers after stale master observation");
-    require(waitForMain(id), "primary remains after local removal");
+    // Removing another display can make WindowServer choose a new main.
+    // The runtime reconciles the observed role; the helper must repair it in place.
+    require(virtual_display_apply_layout("primary", originalMain) && waitForMain(id),
+            "primary is restored after local removal");
+    require(virtual_display_get_id() == id && observedHelper == replacementHelper,
+            "primary repair reuses the same display and helper");
     translation = CGDisplayBounds(originalMain).origin;
     right = 0;
     for (uint32_t i = 0; i < count; ++i) right = MAX(right, CGRectGetMaxX(CGDisplayBounds(displays[i])));

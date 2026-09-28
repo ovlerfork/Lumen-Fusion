@@ -108,6 +108,7 @@ namespace adaptive_display {
         return result;
       }
       result.local_main = local_main;
+      result.main_display = main;
       result.local = local_main ? presence::present : uncertain ? presence::unknown : presence::absent;
       return result;
     }
