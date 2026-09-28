@@ -290,6 +290,16 @@ namespace config {
 
   namespace vt {
 
+    int preference_from_view(const std::string_view &value) {
+      if (value == "enabled") {
+        return 1;
+      }
+      if (value == "disabled") {
+        return 0;
+      }
+      return -1;  // Inherit for unset or invalid preferences.
+    }
+
     enum coder_e : int {
       _auto = 0,  ///< Auto
       cabac,  ///< CABAC
@@ -492,6 +502,7 @@ namespace config {
     {},  // encoder
     {},  // adapter_name
     {},  // output_name
+    4,  // macos_capture_queue_depth
 
     {
       video_t::dd_t::config_option_e::disabled,  // configuration_option
@@ -1156,6 +1167,12 @@ namespace config {
     int_f(vars, "vt_software", video.vt.vt_require_sw, vt::force_software_from_view);
     int_f(vars, "vt_realtime", video.vt.vt_realtime, vt::rt_from_view);
     int_between_f(vars, "vt_max_frame_delay", video.vt.vt_max_frame_delay, {-1, std::numeric_limits<int>::max()});
+    string_restricted_f(vars, "vt_low_latency_rate_control", video.vt.vt_low_latency_rate_control, {"inherit"sv, "auto"sv});
+    int_f(vars, "vt_prio_speed", video.vt.vt_prio_speed, vt::preference_from_view);
+    int_f(vars, "vt_power_efficient", video.vt.vt_power_efficient, vt::preference_from_view);
+    int_f(vars, "macos_capture_queue_depth", video.macos_capture_queue_depth, [](std::string_view value) {
+      return value.size() == 1 && value[0] >= '3' && value[0] <= '8' ? value[0] - '0' : 4;
+    });
 
     bool_f(vars, "vaapi_strict_rc_buffer", video.vaapi.strict_rc_buffer);
 

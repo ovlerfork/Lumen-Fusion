@@ -9,6 +9,7 @@
 
 extern "C" {
 #include <libavcodec/avcodec.h>
+#include <libavutil/opt.h>
 }
 
 #include "src/logging.h"
@@ -33,6 +34,42 @@ namespace {
     completion_scope &operator=(const completion_scope &) = delete;
   };
 }  // namespace
+
+extern "C" OSStatus VTSessionSetProperty(VTSessionRef session, CFStringRef key, CFTypeRef value) {
+  static const auto set_property = reinterpret_cast<decltype(&VTSessionSetProperty)>(
+    dlsym(RTLD_NEXT, "VTSessionSetProperty")
+  );
+  if (!set_property) {
+    BOOST_LOG(error) << "Failed to resolve the system VTSessionSetProperty function";
+    return kVTInvalidSessionErr;
+  }
+  const OSStatus status = set_property(session, key, value);
+  const char *name = nullptr;
+  if (key && CFEqual(key, CFSTR("PrioritizeEncodingSpeedOverQuality"))) {
+    name = "PrioritizeEncodingSpeedOverQuality";
+  } else if (key && CFEqual(key, CFSTR("MaximizePowerEfficiency"))) {
+    name = "MaximizePowerEfficiency";
+  }
+  if (name) {
+    if (status != noErr) {
+      BOOST_LOG(warning) << "VideoToolbox " << name << ": "
+                         << (status == kVTPropertyNotSupportedErr ? "unsupported" : "rejected")
+                         << " (OSStatus " << status << ")";
+    } else {
+      CFTypeRef actual = nullptr;
+      const OSStatus read_status = VTSessionCopyProperty(session, key, kCFAllocatorDefault, &actual);
+      if (read_status == noErr && actual && value && CFEqual(actual, value) && CFGetTypeID(actual) == CFBooleanGetTypeID()) {
+        BOOST_LOG(info) << "Applied VideoToolbox " << name << "=" << (CFBooleanGetValue(static_cast<CFBooleanRef>(actual)) ? "true" : "false");
+      } else {
+        BOOST_LOG(warning) << "VideoToolbox " << name << " accepted but readback is unavailable or differs (OSStatus " << read_status << ")";
+      }
+      if (actual) {
+        CFRelease(actual);
+      }
+    }
+  }
+  return status;
+}
 
 extern "C" OSStatus VTCompressionSessionEncodeFrame(
   VTCompressionSessionRef session,
@@ -69,6 +106,42 @@ extern "C" OSStatus VTCompressionSessionEncodeFrame(
 }
 
 namespace platf::vt {
+  CFDictionaryRef copy_encoder_specification(CFDictionaryRef specification, bool automatic) {
+    if (!automatic || !specification) {
+      return nullptr;
+    }
+    auto copy = CFDictionaryCreateMutableCopy(kCFAllocatorDefault, 0, specification);
+    if (!copy) {
+      BOOST_LOG(warning) << "Cannot copy VideoToolbox encoder specification; inheriting selection";
+      return nullptr;
+    }
+    CFDictionaryRemoveValue(copy, CFSTR("EnableLowLatencyRateControl"));
+    return copy;
+  }
+
+  void apply_encoder_options(AVCodecContext *context, AVDictionary **options, int speed, int power) {
+    if (!context || !context->codec || !context->codec->name ||
+        !std::string_view(context->codec->name).ends_with("_videotoolbox")) {
+      return;
+    }
+    const auto apply = [&](const char *name, int requested) {
+      if (!context->priv_data || !av_opt_find(context->priv_data, name, nullptr, 0, 0)) {
+        BOOST_LOG(warning) << "VideoToolbox FFmpeg option " << name << " unsupported by linked encoder; inheriting default";
+        return;
+      }
+      const int status = av_dict_set_int(options, name, requested, 0);
+      if (status < 0) {
+        BOOST_LOG(warning) << "Cannot request VideoToolbox FFmpeg option " << name << "=" << requested << ": " << status;
+      } else {
+        BOOST_LOG(info) << "Requested VideoToolbox FFmpeg option " << name << "=" << requested;
+      }
+    };
+    apply("prio_speed", speed == 0 ? 0 : 1);
+    if (power == 0 || power == 1) {
+      apply("power_efficient", power);
+    }
+  }
+
   int send_frame(AVCodecContext *context, const AVFrame *frame) {
     const bool enabled = frame && context && context->codec && context->codec->name &&
                          std::string_view(context->codec->name).ends_with("_videotoolbox");

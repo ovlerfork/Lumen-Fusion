@@ -8,8 +8,15 @@
 
 struct AVCodecContext;
 struct AVFrame;
+struct AVDictionary;
 
 namespace platf::vt {
+  // Returns an owned copy only for automatic selection; nullptr leaves the specification unchanged.
+  CFDictionaryRef copy_encoder_specification(CFDictionaryRef specification, bool automatic);
+
+  // Apply before avcodec_open2. Inherit (-1) keeps speed=1 and the FFmpeg power default.
+  void apply_encoder_options(AVCodecContext *context, AVDictionary **options, int speed, int power);
+
   // Completes real VT submissions through their numeric PTS before FFmpeg polls
   // its callback queue. EOS and other encoders retain avcodec_send_frame semantics.
   int send_frame(AVCodecContext *context, const AVFrame *frame);

@@ -66,6 +66,13 @@ const config = ref(props.config)
         ></Checkbox>
       </template>
       <template #macos>
+        <div class="mb-3">
+          <label for="macos_capture_queue_depth" class="form-label">{{ $t('config.macos_capture_queue_depth') }}</label>
+          <input type="number" min="3" max="8" step="1" class="form-control" id="macos_capture_queue_depth"
+                 placeholder="4" v-model="config.macos_capture_queue_depth" />
+          <div class="form-text">{{ $t('config.macos_capture_queue_depth_desc') }}</div>
+        </div>
+
         <!-- Virtual Display -->
         <div class="mb-3">
           <label for="virtual_display" class="form-label">{{ $t('config.virtual_display') }}</label>

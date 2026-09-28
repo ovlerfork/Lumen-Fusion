@@ -88,6 +88,9 @@ namespace config {
       int vt_realtime;
       int vt_max_frame_delay;
       int vt_coder;
+      std::string vt_low_latency_rate_control = "inherit";
+      int vt_prio_speed = -1;
+      int vt_power_efficient = -1;
     } vt;
 
     struct {
@@ -98,6 +101,7 @@ namespace config {
     std::string encoder;
     std::string adapter_name;
     std::string output_name;
+    int macos_capture_queue_depth = 4;
 
     struct dd_t {
       struct workarounds_t {

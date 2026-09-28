@@ -62,6 +62,7 @@ API_AVAILABLE(macos(12.3))
         self.displayID = displayID;
         self.minimumFrameInterval = minimumFrameInterval;
         self.pixelFormat = kCVPixelFormatType_32BGRA;
+        self.queueDepth = 4;
         self.captureAudio = captureAudio;
 
         if (mode) {
@@ -191,7 +192,7 @@ API_AVAILABLE(macos(12.3))
         config.height = self.frameHeight;
         config.minimumFrameInterval = self.minimumFrameInterval;
         config.pixelFormat = self.pixelFormat;
-        config.queueDepth = 4;
+        config.queueDepth = self.queueDepth >= 3 && self.queueDepth <= 8 ? self.queueDepth : 4;
         config.showsCursor = YES;
 
         // Enable audio capture - this is the key feature!

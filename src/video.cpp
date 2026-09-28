@@ -188,18 +188,24 @@ extern "C" OSStatus VTCompressionSessionCreate(
     return kVTInvalidSessionErr;
   }
 
+  const bool automatic = config::video.vt.vt_low_latency_rate_control == "auto";
+  BOOST_LOG(info) << "VideoToolbox requested encoder selection=" << (automatic ? "automatic (remove EnableLowLatencyRateControl)" : "inherit");
+  CFDictionaryRef adjusted_specification = platf::vt::copy_encoder_specification(encoder_specification, automatic);
   const OSStatus status = original_create(
     allocator,
     width,
     height,
     codec_type,
-    encoder_specification,
+    adjusted_specification ? adjusted_specification : encoder_specification,
     source_image_buffer_attributes,
     compressed_data_allocator,
     output_callback,
     output_callback_refcon,
     compression_session_out
   );
+  if (adjusted_specification) {
+    CFRelease(adjusted_specification);
+  }
   if (status == noErr && compression_session_out && *compression_session_out) {
     set_videotoolbox_max_frame_delay(*compression_session_out);
     platf::vt::log_encoder_properties(*compression_session_out);
@@ -1237,7 +1243,6 @@ namespace video {
         {"allow_sw"s, &config::video.vt.vt_allow_sw},
         {"require_sw"s, &config::video.vt.vt_require_sw},
         {"realtime"s, &config::video.vt.vt_realtime},
-        {"prio_speed"s, 1},
         {"max_ref_frames"s, 1},
       },
       {},  // SDR-specific options
@@ -1253,7 +1258,6 @@ namespace video {
         {"allow_sw"s, &config::video.vt.vt_allow_sw},
         {"require_sw"s, &config::video.vt.vt_require_sw},
         {"realtime"s, &config::video.vt.vt_realtime},
-        {"prio_speed"s, 1},
         {"max_ref_frames"s, 1},
       },
       {},  // SDR-specific options
@@ -1274,7 +1278,6 @@ namespace video {
         {"allow_sw"s, &config::video.vt.vt_allow_sw},
         {"require_sw"s, &config::video.vt.vt_require_sw},
         {"realtime"s, &config::video.vt.vt_realtime},
-        {"prio_speed"s, 1},
       },
       {},  // SDR-specific options
       {},  // HDR-specific options
@@ -2119,6 +2122,10 @@ namespace video {
 
       // Allow the encoding device a final opportunity to set/unset or override any options
       encode_device->init_codec_options(ctx.get(), &options);
+
+#ifdef __APPLE__
+      platf::vt::apply_encoder_options(ctx.get(), &options, config::video.vt.vt_prio_speed, config::video.vt.vt_power_efficient);
+#endif
 
       if (auto status = avcodec_open2(ctx.get(), codec, &options)) {
         char err_str[AV_ERROR_MAX_STRING_SIZE] {0};

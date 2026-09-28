@@ -12,6 +12,32 @@ const config = ref(props.config)
 
 <template>
   <div id="videotoolbox-encoder" class="config-page">
+    <div class="mb-3">
+      <label for="vt_low_latency_rate_control" class="form-label">{{ $t('config.vt_low_latency_rate_control') }}</label>
+      <select id="vt_low_latency_rate_control" class="form-select" v-model="config.vt_low_latency_rate_control">
+        <option value="inherit">{{ $t('config.vt_preference_inherit') }}</option>
+        <option value="auto">{{ $t('config.vt_low_latency_rate_control_auto') }}</option>
+      </select>
+      <div class="form-text">{{ $t('config.vt_low_latency_rate_control_desc') }}</div>
+    </div>
+    <div class="mb-3">
+      <label for="vt_prio_speed" class="form-label">{{ $t('config.vt_prio_speed') }}</label>
+      <select id="vt_prio_speed" class="form-select" v-model="config.vt_prio_speed">
+        <option value="inherit">{{ $t('config.vt_preference_inherit') }}</option>
+        <option value="enabled">{{ $t('_common.enabled') }}</option>
+        <option value="disabled">{{ $t('_common.disabled') }}</option>
+      </select>
+      <div class="form-text">{{ $t('config.vt_prio_speed_desc') }}</div>
+    </div>
+    <div class="mb-3">
+      <label for="vt_power_efficient" class="form-label">{{ $t('config.vt_power_efficient') }}</label>
+      <select id="vt_power_efficient" class="form-select" v-model="config.vt_power_efficient">
+        <option value="inherit">{{ $t('config.vt_preference_inherit') }}</option>
+        <option value="enabled">{{ $t('_common.enabled') }}</option>
+        <option value="disabled">{{ $t('_common.disabled') }}</option>
+      </select>
+      <div class="form-text">{{ $t('config.vt_power_efficient_desc') }}</div>
+    </div>
     <!-- Presets -->
     <div class="mb-3">
       <label for="vt_coder" class="form-label">{{ $t('config.vt_coder') }}</label>

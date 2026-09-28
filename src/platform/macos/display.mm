@@ -416,6 +416,7 @@ namespace platf {
         if (!disp->sc_capture) {
           BOOST_LOG(error) << "SCCapture setup failed, trying AVFoundation..."sv;
         } else {
+          disp->sc_capture.queueDepth = config::video.macos_capture_queue_depth;
           disp->width = disp->sc_capture.frameWidth;
           disp->height = disp->sc_capture.frameHeight;
           disp->env_width = disp->width;

@@ -19,6 +19,7 @@ API_AVAILABLE(macos(12.3))
 @property (nonatomic, assign) OSType pixelFormat;
 @property (nonatomic, assign) int frameWidth;
 @property (nonatomic, assign) int frameHeight;
+@property (nonatomic, assign) int queueDepth;
 @property (nonatomic, assign) BOOL captureAudio;
 
 @property (nonatomic, strong) SCStream *stream;
