@@ -77,3 +77,15 @@ TEST_F(MacOSLatencyConfigTest, AcceptsAndRestoresExperimentalPreferences) {
     EXPECT_EQ(config::video.macos_capture_queue_depth, depth);
   }
 }
+
+TEST_F(MacOSLatencyConfigTest, ParsesH264EntropyChoicesAndKeepsTheUnsetDefault) {
+  config::video.vt.vt_coder = -1;
+  apply("");
+  EXPECT_EQ(config::video.vt.vt_coder, -1);
+  apply("vt_coder = cabac\n");
+  EXPECT_EQ(config::video.vt.vt_coder, 1);
+  apply("vt_coder = cavlc\n");
+  EXPECT_EQ(config::video.vt.vt_coder, 2);
+  apply("vt_coder = auto\n");
+  EXPECT_EQ(config::video.vt.vt_coder, 0);
+}

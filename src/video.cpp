@@ -2124,7 +2124,7 @@ namespace video {
       encode_device->init_codec_options(ctx.get(), &options);
 
 #ifdef __APPLE__
-      platf::vt::apply_encoder_options(ctx.get(), &options, config::video.vt.vt_prio_speed, config::video.vt.vt_power_efficient);
+      platf::vt::apply_encoder_options(ctx.get(), &options, config::video.vt.vt_prio_speed, config::video.vt.vt_power_efficient, config::video.vt.vt_coder);
 #endif
 
       if (auto status = avcodec_open2(ctx.get(), codec, &options)) {

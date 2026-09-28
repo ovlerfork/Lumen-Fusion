@@ -49,6 +49,8 @@ extern "C" OSStatus VTSessionSetProperty(VTSessionRef session, CFStringRef key, 
     name = "PrioritizeEncodingSpeedOverQuality";
   } else if (key && CFEqual(key, CFSTR("MaximizePowerEfficiency"))) {
     name = "MaximizePowerEfficiency";
+  } else if (key && CFEqual(key, CFSTR("H264EntropyMode"))) {
+    name = "H264EntropyMode";
   }
   if (name) {
     if (status != noErr) {
@@ -60,6 +62,16 @@ extern "C" OSStatus VTSessionSetProperty(VTSessionRef session, CFStringRef key, 
       const OSStatus read_status = VTSessionCopyProperty(session, key, kCFAllocatorDefault, &actual);
       if (read_status == noErr && actual && value && CFEqual(actual, value) && CFGetTypeID(actual) == CFBooleanGetTypeID()) {
         BOOST_LOG(info) << "Applied VideoToolbox " << name << "=" << (CFBooleanGetValue(static_cast<CFBooleanRef>(actual)) ? "true" : "false");
+      } else if (read_status == noErr && actual && CFGetTypeID(actual) == CFStringGetTypeID()) {
+        char text[128] {};
+        if (CFStringGetCString(static_cast<CFStringRef>(actual), text, sizeof(text), kCFStringEncodingUTF8)) {
+          BOOST_LOG(info) << "VideoToolbox " << name << "=" << text;
+          if (!value || !CFEqual(actual, value)) {
+            BOOST_LOG(warning) << "VideoToolbox " << name << " readback differs from the requested value";
+          }
+        } else {
+          BOOST_LOG(warning) << "VideoToolbox " << name << " readback string conversion failed";
+        }
       } else {
         BOOST_LOG(warning) << "VideoToolbox " << name << " accepted but readback is unavailable or differs (OSStatus " << read_status << ")";
       }
@@ -119,26 +131,29 @@ namespace platf::vt {
     return copy;
   }
 
-  void apply_encoder_options(AVCodecContext *context, AVDictionary **options, int speed, int power) {
+  void apply_encoder_options(AVCodecContext *context, AVDictionary **options, int speed, int power, int coder) {
     if (!context || !context->codec || !context->codec->name ||
         !std::string_view(context->codec->name).ends_with("_videotoolbox")) {
       return;
     }
-    const auto apply = [&](const char *name, int requested) {
+    const auto apply = [&](const char *name, const char *requested) {
       if (!context->priv_data || !av_opt_find(context->priv_data, name, nullptr, 0, 0)) {
         BOOST_LOG(warning) << "VideoToolbox FFmpeg option " << name << " unsupported by linked encoder; inheriting default";
         return;
       }
-      const int status = av_dict_set_int(options, name, requested, 0);
+      const int status = av_dict_set(options, name, requested, 0);
       if (status < 0) {
         BOOST_LOG(warning) << "Cannot request VideoToolbox FFmpeg option " << name << "=" << requested << ": " << status;
       } else {
         BOOST_LOG(info) << "Requested VideoToolbox FFmpeg option " << name << "=" << requested;
       }
     };
-    apply("prio_speed", speed == 0 ? 0 : 1);
+    apply("prio_speed", speed == 0 ? "0" : "1");
     if (power == 0 || power == 1) {
-      apply("power_efficient", power);
+      apply("power_efficient", power == 0 ? "0" : "1");
+    }
+    if (context->codec_id == AV_CODEC_ID_H264 && (coder == 1 || coder == 2)) {
+      apply("coder", coder == 1 ? "cabac" : "cavlc");
     }
   }
 
