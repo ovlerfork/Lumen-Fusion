@@ -67,6 +67,28 @@ Some powered-off monitors still appear available; the same settings group provid
 a detection override. Resume preserves the desktop mode; end and reconnect the
 session when a different desktop resolution or refresh rate is needed.
 
+可选性能对比 / Optional latency comparisons
+
+安装后可运行 benchmark-latency.command，或在终端运行：
+bash "/Applications/Lumen Fusion.app/Contents/Resources/benchmark-latency.command" --repeat 2
+测试结果写入桌面的新目录，不修改应用、配置、配对、登录项或虚拟桌面。
+对比前先断开正在运行的媒体串流；空闲主机可保持运行以保留桌面。
+此测试测量合成画面的编码耗时，不等于抓屏、网络和客户端在内的总延迟。
+每组测试结束后会解码检查输出；同时查看实际 FPS、p95/p99 和漏过的时隙，
+不要仅依据最低值选择设置。完整选项通过脚本 --help 或应用 --benchmark --help 查看。
+Run benchmark-latency.command after installation, or use the command above.
+Results are written to a new Desktop folder without editing host settings or state.
+Disconnect active media streams first; an idle host may remain to retain a desktop.
+This synthetic encoder test is not capture/network/client latency. It validates
+output by decoding after timing. Compare FPS, tail latency and missed ticks too.
+
+管理页面提供 VideoToolbox 编码器选择、速度/功耗偏好、H.264 熵编码，以及
+音频/视频页的采集队列深度。默认行为不变；实验不会自动应用“最佳”配置。
+真实串流可在“高级设置”启用性能日志，用完后关闭，比较两边保持同一日志设置。
+The web UI exposes reversible VideoToolbox and capture-queue experiments. Defaults
+are unchanged. Advanced settings provide opt-in real-stream performance logging;
+disable it after comparisons and use the same logging setting on both sides.
+
 保留现有配置和配对 / Existing settings and pairing
 
 配置继续位于 ~/.config/lumina。替换 .app 不会清空它。

@@ -42,14 +42,17 @@ case "$repeat" in ''|*[!0-9]*) echo '--repeat must be 1..100' >&2; exit 2 ;; esa
 
 if [[ -z "$app" ]]; then
   for candidate in "$here/../.." "$here/Lumen Fusion.app" '/Applications/Lumen Fusion.app' "$HOME/Applications/Lumen Fusion.app"; do
-    if [[ -x "$candidate/Contents/MacOS/Lumen Fusion" ]]; then
+    if [[ -x "$candidate/Contents/MacOS/Lumen Fusion" && -f "$candidate/Contents/Resources/benchmark-latency.command" ]]; then
       app="$candidate"
       break
     fi
   done
 fi
 binary="$app/Contents/MacOS/Lumen Fusion"
-[[ -n "$app" && -x "$binary" ]] || { echo 'Lumen Fusion.app not found. Install it or pass --app.' >&2; exit 2; }
+[[ -n "$app" && -x "$binary" && -f "$app/Contents/Resources/benchmark-latency.command" ]] || {
+  echo 'A benchmark-enabled Lumen Fusion.app was not found. Install the new build or pass --app.' >&2
+  exit 2
+}
 "$binary" --benchmark --help >/dev/null || { echo 'This app does not support the benchmark command.' >&2; exit 2; }
 
 umask 077

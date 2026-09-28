@@ -121,6 +121,52 @@ both comparisons and disable it afterward. `capture_to_send` is host-only, not
 end-to-end latency. See the [diagnostic fields and test procedure](docs/streaming-performance-logging.md)
 for p99, cadence measurements, and the consumed-frame definition of `source_fps`.
 
+### Packaged encoder benchmark
+
+The DMG and the app's `Contents/Resources` include `benchmark-latency.command`.
+It runs the **same Release binary and FFmpeg libraries** as streaming, through an
+isolated `--benchmark` entry before normal host initialization. No Homebrew,
+compiler, Python, configuration edit, pairing reset, virtual display, or capture
+permission is required by this synthetic test. Disconnect active streams and stop
+other encoders first for comparable measurements; an idle host may remain open
+so an adaptive desktop is not discarded.
+
+```bash
+bash "/Applications/Lumen Fusion.app/Contents/Resources/benchmark-latency.command" --repeat 2
+```
+
+Results are saved to a new `Lumen-Fusion-Benchmark.*` directory on the Desktop
+(or in the home directory if Desktop is absent). Each case has a log, raw CSV,
+and JSON summary; `cases.tsv` retains each exit code. The matrix tests both codecs
+with baseline, automatic selection, automatic selection plus power preference
+disabled, speed preference disabled, and unpaced baseline; it also tests H.264
+CAVLC and inherited thread QoS. Defaults are 1600×1112, 60 FPS, 20 Mbps,
+30 warmup plus 180 measured frames. Width, height, FPS, bitrate (bits/second),
+warmup, frame count and repeat count can be supplied explicitly.
+
+A single comparison can also be run directly, using a new output file prefix:
+
+```bash
+"/Applications/Lumen Fusion.app/Contents/MacOS/Lumen Fusion" --benchmark --codec h264 --variant auto --output "$HOME/Desktop/lumen-auto"
+```
+
+It writes `lumen-auto-r1.csv` and `lumen-auto-r1.json` after timing. Existing results
+are not overwritten. `--benchmark --help` lists the available options. The default
+USER_INITIATED thread QoS matches the application's encode-thread policy; inherited
+QoS is a measurement control, not a newly enabled streaming optimization.
+
+Warmup and the first frame are reported separately. Raw records include preparation,
+sleep deadlines/wake times, submission, output, missed source ticks, PTS and bytes.
+The report records the actual encoder/property readback and effective output FPS.
+Native VideoToolbox decoding then checks all encoded frames, dimensions and PTS
+**outside the timed pass**. This does not measure image quality.
+
+A value near 5 ms in this tool means **synthetic submission-to-packet latency**, not
+5 ms host processing or end-to-end latency. Confirm any promising choice with the
+real-stream diagnostics above, including 60 FPS cadence, p95/p99, drops and visual
+quality. Capture queue changes require that real-stream test. No experimental
+choice is automatically saved or made the default.
+
 ## Troubleshooting
 
 | Problem | What to check |
