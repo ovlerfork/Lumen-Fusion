@@ -25,7 +25,7 @@ namespace adaptive_display {
     }
 
     TEST(AdaptiveDisplayTopology, GrowthShrinkageAndFailedConfirmationAreUnknown) {
-      for (const auto changed : {std::vector<CGDirectDisplayID> {}, std::vector<CGDirectDisplayID> {1, 2}, std::vector<CGDirectDisplayID> {1, 2, 3}}) {
+      for (const auto &changed : {std::vector<CGDirectDisplayID> {}, std::vector<CGDirectDisplayID> {1, 2}, std::vector<CGDirectDisplayID> {1, 2, 3}}) {
         auto initial = fixed_displays({1});
         auto next = fixed_displays(changed);
         unsigned calls = 0;
