@@ -17,6 +17,8 @@ extern "C" {
 namespace {
   struct completion_scope;
   thread_local completion_scope *active_completion = nullptr;
+  thread_local platf::vt::session_observer session_created = nullptr;
+  thread_local void *session_observer_opaque = nullptr;
 
   struct completion_scope {
     completion_scope *previous = active_completion;
@@ -118,6 +120,17 @@ extern "C" OSStatus VTCompressionSessionEncodeFrame(
 }
 
 namespace platf::vt {
+  void set_session_observer(session_observer observer, void *opaque) {
+    session_created = observer;
+    session_observer_opaque = opaque;
+  }
+
+  void observe_session(VTCompressionSessionRef session) {
+    if (session_created) {
+      session_created(session, session_observer_opaque);
+    }
+  }
+
   CFDictionaryRef copy_encoder_specification(CFDictionaryRef specification, bool automatic) {
     if (!automatic || !specification) {
       return nullptr;

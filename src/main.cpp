@@ -25,6 +25,7 @@
 
 #if defined(__APPLE__) || defined(__MACH__)
   #include "login_item.h"
+  #include "platform/macos/encoder_benchmark.h"
   #include "platform/macos/signal_dispatcher.h"
 #endif
 
@@ -475,6 +476,11 @@ static int run_main(int argc, char *argv[]) {
 }
 
 int main(int argc, char *argv[]) {
+#ifdef __APPLE__
+  if (argc > 1 && std::string_view(argv[1]) == "--benchmark") {
+    return platf::vt::benchmark_main(argc - 2, argv + 2);
+  }
+#endif
   lifetime::argv = argv;
 
   const int exit_code = run_main(argc, argv);

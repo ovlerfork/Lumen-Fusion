@@ -11,6 +11,12 @@ struct AVFrame;
 struct AVDictionary;
 
 namespace platf::vt {
+  // Thread-local observation of session creation; callbacks may retain the session
+  // to inspect properties after avcodec_open2 finishes applying encoder options.
+  using session_observer = void (*)(VTCompressionSessionRef, void *);
+  void set_session_observer(session_observer observer, void *opaque);
+  void observe_session(VTCompressionSessionRef session);
+
   // Returns an owned copy only for automatic selection; nullptr leaves the specification unchanged.
   CFDictionaryRef copy_encoder_specification(CFDictionaryRef specification, bool automatic);
 

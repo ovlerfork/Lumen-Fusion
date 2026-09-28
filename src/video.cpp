@@ -209,6 +209,7 @@ extern "C" OSStatus VTCompressionSessionCreate(
   if (status == noErr && compression_session_out && *compression_session_out) {
     set_videotoolbox_max_frame_delay(*compression_session_out);
     platf::vt::log_encoder_properties(*compression_session_out);
+    platf::vt::observe_session(*compression_session_out);
   }
   return status;
 }
