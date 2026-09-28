@@ -3,6 +3,7 @@
  * @brief Isolated synthetic VideoToolbox encoder measurements in the native app.
  */
 #include "encoder_benchmark.h"
+#include "encoder_benchmark_decode.h"
 #include "vt_output_completion.h"
 
 #include <algorithm>
@@ -55,7 +56,7 @@ namespace {
     int warmup = 30;
     int repeat = 1;
     bool paced = true;
-    bool user_initiated = false;
+    bool user_initiated = true;
     bool automatic = false;
     int speed = -1;
     int power = -1;
@@ -612,7 +613,10 @@ namespace {
     structured.close();
     require(!csv.fail() && !structured.fail(), "Failed to write output files: " + prefix);
     std::cout << "Encoder benchmark: " << prefix << ".{csv,json}; matched=" << o.frames
-              << " actual_fps=" << report["measured"]["actual_fps"] << "; decoder_validation=not_run\n";
+              << " encode_ms_p50=" << report["measured"]["submit_to_output_ms"]["p50"]
+              << " encode_ms_p95=" << report["measured"]["submit_to_output_ms"]["p95"]
+              << " actual_fps=" << report["measured"]["actual_fps"]
+              << "; decoder_validation=" << report["decoder_validation"]["status"] << '\n';
   }
 }  // namespace
 
@@ -629,10 +633,10 @@ namespace platf::vt {
                        "  --frames N --warmup N --repeat N default 180 / 30 / 1\n"
                        "  --variant baseline|auto|auto-poweroff|speedoff|h264-cavlc\n"
                        "  --paced | --unpaced              default paced\n"
-                       "  --qos inherit|user-initiated      default inherit\n"
+                       "  --qos inherit|user-initiated      default user-initiated (matches streaming)\n"
                        "  --output PREFIX                  default ./encoder-benchmark\n"
                        "Writes PREFIX-rN.csv and PREFIX-rN.json after each pass; parent must exist.\n"
-                       "Completion is always enabled. Decoder validation: not_run.\n";
+                       "Completion is always enabled. Native decode validation runs after timing.\n";
           return 0;
         }
         const options o = parse(argc, argv);
@@ -660,7 +664,20 @@ namespace platf::vt {
           }
           report["setup_ms_including_open"] = std::chrono::duration<double, std::milli>(clock_type::now() - setup_started).count();
           measure(e, o, scenes, samples);
+          std::vector<benchmark::packet_view> packets;
+          packets.reserve(samples.size());
+          for (const auto &s : samples) {
+            packets.push_back({std::span<const uint8_t>(s.packet->data, s.packet->size), s.packet->pts});
+          }
+          const auto decoded = benchmark::validate_decode(o.codec == "hevc", o.width, o.height,
+                                                         e.context->time_base.num, e.context->time_base.den, packets);
+          report["decoder_validation"] = {{"status", decoded.valid ? "passed" : "failed"},
+                                          {"decoded_frames", decoded.decoded_frames},
+                                          {"expected_frames", samples.size()},
+                                          {"osstatus", decoded.status}, {"error", decoded.error},
+                                          {"scope", "post-timing bitstream, frame count, dimensions and PTS; not image quality"}};
           write_results(o, run, std::move(report), samples);
+          require(decoded.valid, "Native decode validation failed: " + decoded.error);
         }
         return 0;
       } catch (const std::exception &error) {

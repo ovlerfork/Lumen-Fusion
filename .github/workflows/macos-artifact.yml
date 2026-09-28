@@ -102,6 +102,8 @@ jobs:
           bash scripts/validate-macos-package.sh "$installation/Lumen Fusion.app" "$DIAGNOSTICS/dmg"
       - name: Validate opt-in login item with the installed app
         run: python3 scripts/validate-macos-login-item.py "$INSTALLED_APP" "$DIAGNOSTICS/login-item"
+      - name: Validate packaged latency benchmark and compare encoder variants
+        run: python3 scripts/validate-macos-benchmark.py "$INSTALLED_APP" "$DIAGNOSTICS/benchmark"
       - name: Upload native test measurements
         if: always()
         uses: actions/upload-artifact@v4
@@ -113,6 +115,7 @@ jobs:
             ${{ env.DIAGNOSTICS }}/config-save.log
             ${{ env.DIAGNOSTICS }}/virtual-display/native-display-lifecycle.log
             ${{ env.DIAGNOSTICS }}/login-item/login-item.log
+            ${{ env.DIAGNOSTICS }}/benchmark/
           if-no-files-found: warn
       - name: Upload failure diagnostics
         if: failure()
