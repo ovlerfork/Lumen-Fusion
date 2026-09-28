@@ -72,6 +72,8 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/macos/publish.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/vt_output_completion.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/vt_output_completion.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/macos/encoder_benchmark.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/macos/encoder_benchmark.mm"
         "${CMAKE_SOURCE_DIR}/third-party/TPCircularBuffer/TPCircularBuffer.c"
         "${CMAKE_SOURCE_DIR}/third-party/TPCircularBuffer/TPCircularBuffer.h"
         ${APPLE_PLIST_FILE})
