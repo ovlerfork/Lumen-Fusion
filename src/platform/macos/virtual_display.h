@@ -18,6 +18,9 @@ extern "C" {
  * @param layout Desired arrangement: "extend", "primary", "mirror", or "system" (leave the
  *               mirror state to WindowServer's persisted configuration).
  *               NULL is treated as "extend".
+ *               VirtualMac models reject explicit mirror requests before any
+ *               display changes, preserving an existing owned helper and display.
+ *               Mirror admission also fails if the hardware model cannot be read.
  * @return The CGDirectDisplayID of the created display, or 0 on failure.
  */
 uint32_t virtual_display_create(int width, int height, int fps, const char *layout);
@@ -29,6 +32,7 @@ uint32_t virtual_display_create(int width, int height, int fps, const char *layo
  * retry the same mode to resume the same display.
  * Returns the VD ID, or 0 on failure. NULL/empty layout means extend.
  * Adaptive policy must resolve to primary or extend before calling this API.
+ * VirtualMac mirror rejection returns 0 and preserves ownership and pending IPC.
  */
 uint32_t virtual_display_ensure(int width, int height, int fps, const char *layout);
 
@@ -38,6 +42,7 @@ uint32_t virtual_display_ensure(int width, int height, int fps, const char *layo
  * the latter is detached before becoming master. 0 selects the original main
  * when eligible, then another active or promotable local display.
  * Accepts extend/primary/mirror/system. System makes no arrangement changes.
+ * VirtualMac rejects mirror with 0 before sending a command or changing state.
  * Returns 1 after helper acknowledgement, 0 on failure. A mirror acknowledgement
  * requires the helper to observe the requested mirror set when an eligible
  * local exists; without one, mirror leaves the arrangement unchanged. The caller's

@@ -56,6 +56,8 @@ Resume reuses a still-owned, usable virtual display. If the client negotiates a 
 
 This feature does **not** unlock the Mac, change password policies, or override manual sleep, lid-close sleep, thermal protection, or low-battery sleep. It is not a replacement for macOS closed-display operating requirements. Idle-sleep prevention and screen-lock policy remain separate.
 
+On macOS virtual machines whose hardware model begins with `VirtualMac`, explicit virtual-display **Mirror** requests are rejected before changing displays. Native mirror transactions reproducibly caused display-list loss and termination of the graphical CI session; the underlying WindowServer cause remains unresolved. An unreadable model also refuses an explicit Mirror request. Adaptive primary/extension transitions do not use mirroring and remain available. Tests on these machines check safe rejection and unchanged ownership/topology, not successful native mirroring; physical-Mac mirror behavior requires separate validation.
+
 ## Pair and stream
 
 1. Open the local administration page from the menu bar.

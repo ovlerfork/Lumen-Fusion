@@ -15,6 +15,7 @@
 #include <time.h>
 #include <unistd.h>
 #include "virtual_display.h"
+#include "virtual_display_mirror.h"
 
 extern char **environ;
 static pthread_mutex_t vd_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -190,6 +191,7 @@ static BOOL waitForCreationLocked(void) {
 }
 
 static BOOL applyLocked(const char *layout, uint32_t local_main_id) {
+  if (!vd_mirror_request_allowed(layout)) return NO;
   if (!validLayout(layout) || childStateLocked() != VD_CHILD_LIVE) return NO;
   double deadline = monotonicSeconds() + 5.0;
   uint32_t reply;
@@ -211,6 +213,7 @@ static BOOL applyLocked(const char *layout, uint32_t local_main_id) {
 }
 
 static uint32_t createLocked(int width, int height, int fps, const char *layout) {
+  if (!vd_mirror_request_allowed(layout)) return 0;
   if (width <= 0 || height <= 0 || fps <= 0 || !validLayout(layout)) return 0;
   if (!stopLocked()) return 0;
   if (!layout || !*layout) layout = "extend";
@@ -278,7 +281,7 @@ uint32_t virtual_display_create(int width, int height, int fps, const char *layo
 uint32_t virtual_display_ensure(int width, int height, int fps, const char *layout) {
   pthread_mutex_lock(&vd_mutex);
   uint32_t result = 0;
-  if (width > 0 && height > 0 && fps > 0 && validLayout(layout)) {
+  if (width > 0 && height > 0 && fps > 0 && validLayout(layout) && vd_mirror_request_allowed(layout)) {
     vd_child_state state = childStateLocked();
     if (state != VD_CHILD_UNKNOWN) {
       if (state == VD_CHILD_LIVE && width == vd_width && height == vd_height && fps == vd_fps)

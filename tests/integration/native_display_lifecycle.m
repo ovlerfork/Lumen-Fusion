@@ -12,6 +12,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include "virtual_display.h"
+#include "virtual_display_mirror.h"
 
 #ifdef NATIVE_WRAPPER_OBJECT
 // Substitute after system declarations so Darwin symbol aliases stay intact.
@@ -34,8 +35,19 @@ int native_test_poll(struct pollfd *, nfds_t, int);
 #define write native_test_write
 #define poll native_test_poll
 #include "virtual_display.m"
+
+// Exercise the real helper protocol independently of wrapper admission.
+uint32_t native_test_helper_mirror(CGDirectDisplayID local) {
+  char command[64];
+  int size = snprintf(command, sizeof(command), "mirror %u\n", local);
+  if (vd_pending_reply || write(vd_command, command, size) != size) return UINT32_MAX;
+  vd_pending_reply = YES;
+  uint32_t reply = UINT32_MAX;
+  return readReply(&reply, monotonicSeconds() + 5.0) ? reply : UINT32_MAX;
+}
 #else
 extern char **environ;
+uint32_t native_test_helper_mirror(CGDirectDisplayID);
 
 // All unselected observations and helper execution remain native.
 static int interruptedWait;
@@ -90,8 +102,9 @@ CGError native_test_online_list(uint32_t capacity, CGDirectDisplayID *ids, uint3
 CGError native_test_active_list(uint32_t capacity, CGDirectDisplayID *ids, uint32_t *count) {
   CGError err = CGGetActiveDisplayList(capacity, ids, count);
   if (err == kCGErrorSuccess && (offlineObservation || inactiveObservation)) omitDisplay(ids, count, unavailableID);
-  // Vary only the wrapper's observation of a real, already-established mirror
-  // set. This does not change WindowServer's mirroring implementation.
+  // Vary the wrapper's active-list observation. Supported native cases use a
+  // real mirror set; blocked models inject a mirror relation between real IDs.
+  // Neither substitution changes WindowServer's mirroring implementation.
   if (err == kCGErrorSuccess && activeMirrorSlave && *count < capacity) {
     omitDisplay(ids, count, activeMirrorSlave);
     if (includeMirrorSlave) ids[(*count)++] = activeMirrorSlave;
@@ -222,6 +235,87 @@ static void require(BOOL condition, const char *message) {
     localFixture = nil;
     exit(1);
   }
+}
+
+static NSDictionary *displayTopology(void) {
+  CGDirectDisplayID online[64], active[64];
+  uint32_t onlineCount = 0, activeCount = 0;
+  require(CGGetOnlineDisplayList(64, online, &onlineCount) == kCGErrorSuccess && onlineCount > 0 && onlineCount < 64 &&
+          CGGetActiveDisplayList(64, active, &activeCount) == kCGErrorSuccess && activeCount > 0 && activeCount < 64,
+          "complete topology for mirror rejection");
+  NSMutableDictionary *entries = [NSMutableDictionary dictionary];
+  NSMutableArray *activeIDs = [NSMutableArray array];
+  for (uint32_t i = 0; i < activeCount; ++i) [activeIDs addObject:@(active[i])];
+  for (uint32_t i = 0; i < onlineCount; ++i) {
+    CGDirectDisplayID id = online[i];
+    CGRect bounds = CGDisplayBounds(id);
+    CGDisplayModeRef mode = CGDisplayCopyDisplayMode(id);
+    require(mode != NULL, "online display retains a mode");
+    entries[@(id)] = @[@(CGDisplayMirrorsDisplay(id)), @(bounds.origin.x), @(bounds.origin.y),
+                      @(bounds.size.width), @(bounds.size.height),
+                      @(CGDisplayModeGetPixelWidth(mode)), @(CGDisplayModeGetPixelHeight(mode)),
+                      @(CGDisplayModeGetRefreshRate(mode))];
+    CGDisplayModeRelease(mode);
+  }
+  return @{@"main": @(CGMainDisplayID()), @"active": activeIDs, @"online": entries};
+}
+
+static void rejectedHelperStartup(BOOL managed) {
+  NSString *helper = [[[[NSBundle mainBundle] executablePath] stringByDeletingLastPathComponent]
+      stringByAppendingPathComponent:@"vd_helper"];
+  int output[2];
+  require(pipe(output) == 0, "mirror startup pipe");
+  posix_spawn_file_actions_t actions;
+  posix_spawn_file_actions_init(&actions);
+  posix_spawn_file_actions_adddup2(&actions, output[1], STDOUT_FILENO);
+  posix_spawn_file_actions_addclose(&actions, output[0]);
+  posix_spawn_file_actions_addclose(&actions, output[1]);
+  const char *args[] = {helper.fileSystemRepresentation, "1280", "720", "60", "mirror", managed ? "--managed" : NULL, NULL};
+  pid_t child;
+  int err = posix_spawn(&child, args[0], &actions, NULL, (char *const *)args, environ);
+  posix_spawn_file_actions_destroy(&actions);
+  close(output[1]);
+  require(err == 0, "spawn helper mirror rejection");
+  struct pollfd fd = {output[0], POLLIN, 0};
+  char response[32] = {0};
+  ssize_t length = poll(&fd, 1, 5000) > 0 ? read(output[0], response, sizeof(response) - 1) : -1;
+  close(output[0]);
+  int status = 0;
+  BOOL exited = NO;
+  for (int i = 0; i < 200; ++i) {
+    if (waitpid(child, &status, WNOHANG) == child) { exited = YES; break; }
+    usleep(10000);
+  }
+  if (!exited) { kill(child, SIGKILL); waitpid(child, &status, 0); }
+  require(exited && WIFEXITED(status) && WEXITSTATUS(status) == 1 && length == 2 && !strcmp(response, "0\n"),
+          "standalone and managed mirror startup return native failure");
+}
+
+static void rejectedMirrorRequests(CGDirectDisplayID owned, CGDirectDisplayID local) {
+  NSDictionary *before = displayTopology();
+  pid_t helper = observedHelper;
+  NSString *ownedFile = [NSString stringWithContentsOfFile:@"/tmp/sunshine_vd_id" encoding:NSUTF8StringEncoding error:nil];
+  require(ownedFile != nil, "owned display discovery state exists");
+  for (int attempt = 0; attempt < 2; ++attempt) {
+    int writes = commandWrites;
+    require(!virtual_display_apply_layout("mirror", local), "VirtualMac rejects mirror layout");
+    require(!virtual_display_ensure(1440, 900, 60, "mirror"), "VirtualMac rejects same-mode mirror Resume");
+    require(!virtual_display_ensure(1280, 720, 60, "mirror"), "VirtualMac rejects changed-mode mirror without replacement");
+    require(!virtual_display_create(1280, 720, 60, "mirror"), "VirtualMac rejects mirror create without replacement");
+    require(commandWrites == writes, "wrapper rejection sends no helper command");
+    require(native_test_helper_mirror(local) == 0, "managed helper mirror rejection replies zero");
+    rejectedHelperStartup(attempt != 0);
+    require(virtual_display_get_id() == owned && virtual_display_get_target_id() == owned && observedHelper == helper &&
+            kill(helper, 0) == 0, "repeated mirror rejection retains owned helper and capture target");
+    require([ownedFile isEqualToString:[NSString stringWithContentsOfFile:@"/tmp/sunshine_vd_id" encoding:NSUTF8StringEncoding error:nil]],
+            "mirror rejection preserves discovery state");
+    CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.1, false);
+    require([before isEqualToDictionary:displayTopology()], "mirror rejection preserves native topology and modes");
+  }
+  require(virtual_display_ensure(1440, 900, 60, "extend") == owned && observedHelper == helper,
+          "extension resumes same helper after mirror rejection");
+  puts("PASS: VirtualMac mirror rejection preserves topology, modes, helper, ownership and protocol");
+  puts("NOT EXECUTED: native positive mirror coverage on VirtualMac (production admission rejects this platform)");
 }
 
 static BOOL waitForMain(CGDirectDisplayID id) {
@@ -514,6 +608,11 @@ int main(int argc, char **argv) {
     }
     require(argc == 2 && !strcmp(argv[1], "--disposable-windowserver"),
             "pass --disposable-windowserver to authorize temporary display changes");
+    char model[128] = {0};
+    size_t modelSize = sizeof(model) - 1;
+    require(sysctlbyname("hw.model", model, &modelSize, NULL, 0) == 0 && model[0],
+            "hardware model required for native mirror admission coverage");
+    BOOL mirrorBlocked = vd_model_is_virtual_mac(model);
     [NSApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
     CGDirectDisplayID originalMain = CGMainDisplayID();
@@ -567,6 +666,14 @@ int main(int argc, char **argv) {
     require(delayedReply && virtual_display_get_id() == id && observedHelper == originalHelper,
             "acknowledgement timeout retains live helper and VD");
     require(waitForMain(originalMain), "timed-out command actually applied extension");
+    if (mirrorBlocked) {
+      require(!virtual_display_apply_layout("mirror", originalMain) &&
+              !virtual_display_create(1440, 900, 60, "mirror") &&
+              !virtual_display_ensure(1440, 900, 60, "mirror"), "mirror rejected with outstanding reply");
+      require(delayedReply && replyTimeouts == 1 && commandWrites == writesBeforeDelay + 1 &&
+              virtual_display_get_id() == id && observedHelper == originalHelper,
+              "mirror admission preserves pending reply and owned helper");
+    }
     require(!virtual_display_apply_layout("primary", 0), "outstanding reply keeps retry bounded");
     require(commandWrites == writesBeforeDelay + 1 && virtual_display_get_id() == id,
             "pending acknowledgement prevents another command without releasing VD");
@@ -710,24 +817,30 @@ int main(int argc, char **argv) {
     pid_t mirrorHelper = observedHelper;
     require(virtual_display_apply_layout("extend", originalMain) && waitForMain(originalMain),
             "helper remembers independent mirror fixture");
-    CGDisplayConfigRef reverseConfig;
-    CGError reverseErr = CGBeginDisplayConfiguration(&reverseConfig);
-    require(reverseErr == kCGErrorSuccess, "reverse mirror begin");
-    reverseErr = CGConfigureDisplayMirrorOfDisplay(reverseConfig, mirrorLocal, changed);
-    if (reverseErr == kCGErrorSuccess) {
-      logMirrorModes("before reverse mirror completion", mirrorLocal, changed);
-      reverseErr = CGCompleteDisplayConfiguration(reverseConfig, kCGConfigureForAppOnly);
-      fprintf(stderr, "[native_display_lifecycle] reverse mirror completion returned slave=%u master=%u error=%d\n",
-              mirrorLocal, changed, reverseErr);
-      fflush(stderr);
-      logMirrorModes("after reverse mirror completion", mirrorLocal, changed);
-    } else CGCancelDisplayConfiguration(reverseConfig);
-    require(reverseErr == kCGErrorSuccess && waitForMirror(mirrorLocal, changed, changed),
-            "local fixture is online mirror slave of VD");
-    require(virtual_display_apply_layout("mirror", mirrorLocal), "reverse mirror promotes preferred mirrored local");
-    require(waitForMirror(changed, mirrorLocal, changed), "VD becomes slave of promoted local with usable capture target");
-    // Exercise both valid active-list forms at the wrapper boundary, with the
-    // native online membership and slave->master relationship unchanged.
+    if (mirrorBlocked) {
+      rejectedMirrorRequests(changed, mirrorLocal);
+    } else {
+      CGDisplayConfigRef reverseConfig;
+      CGError reverseErr = CGBeginDisplayConfiguration(&reverseConfig);
+      require(reverseErr == kCGErrorSuccess, "reverse mirror begin");
+      reverseErr = CGConfigureDisplayMirrorOfDisplay(reverseConfig, mirrorLocal, changed);
+      if (reverseErr == kCGErrorSuccess) {
+        logMirrorModes("before reverse mirror completion", mirrorLocal, changed);
+        reverseErr = CGCompleteDisplayConfiguration(reverseConfig, kCGConfigureForAppOnly);
+        fprintf(stderr, "[native_display_lifecycle] reverse mirror completion returned slave=%u master=%u error=%d\n",
+                mirrorLocal, changed, reverseErr);
+        fflush(stderr);
+        logMirrorModes("after reverse mirror completion", mirrorLocal, changed);
+      } else CGCancelDisplayConfiguration(reverseConfig);
+      require(reverseErr == kCGErrorSuccess && waitForMirror(mirrorLocal, changed, changed),
+              "local fixture is online mirror slave of VD");
+      require(virtual_display_apply_layout("mirror", mirrorLocal), "reverse mirror promotes preferred mirrored local");
+      require(waitForMirror(changed, mirrorLocal, changed), "VD becomes slave of promoted local with usable capture target");
+    }
+    // Keep wrapper observation coverage on VirtualMac using actual online IDs
+    // and a substituted mirror relationship, without configuring native mirrors.
+    // Other models observe the real mirror set established above.
+    if (mirrorBlocked) { unavailableID = changed; staleMaster = mirrorLocal; }
     activeMirrorSlave = changed;
     for (int included = 0; included < 2; ++included) {
       includeMirrorSlave = included;
@@ -735,22 +848,27 @@ int main(int argc, char **argv) {
               included ? "mirror target ready with slave in active observation" :
                          "mirror target ready without slave in active observation");
     }
-    activeMirrorSlave = 0;
-    require(virtual_display_get_id() == changed && observedHelper == mirrorHelper,
-            "reverse mirror retains same helper and VD");
-    require(virtual_display_apply_layout("extend", originalMain) && waitForMain(originalMain),
-            "extension restores local main after reverse mirror");
-    CGDirectDisplayID independent[] = {changed, mirrorLocal};
-    require(waitForDisplays(independent, 2, YES) && !CGDisplayMirrorsDisplay(mirrorLocal) &&
-            !CGDisplayMirrorsDisplay(changed), "mirror participants return to independent displays");
-    require(CGPointEqualToPoint(CGDisplayBounds(mirrorLocal).origin, mirrorOrigin), "reverse mirror preserves saved fixture origin");
-    for (uint32_t i = 0; i < count; ++i)
-      require(CGPointEqualToPoint(CGDisplayBounds(displays[i]).origin, bounds[i].origin), "reverse mirror restores user local origins");
+    activeMirrorSlave = staleMaster = 0;
+    if (!mirrorBlocked) {
+      require(virtual_display_get_id() == changed && observedHelper == mirrorHelper,
+              "reverse mirror retains same helper and VD");
+      require(virtual_display_apply_layout("extend", originalMain) && waitForMain(originalMain),
+              "extension restores local main after reverse mirror");
+      CGDirectDisplayID independent[] = {changed, mirrorLocal};
+      require(waitForDisplays(independent, 2, YES) && !CGDisplayMirrorsDisplay(mirrorLocal) &&
+              !CGDisplayMirrorsDisplay(changed), "mirror participants return to independent displays");
+      require(CGPointEqualToPoint(CGDisplayBounds(mirrorLocal).origin, mirrorOrigin), "reverse mirror preserves saved fixture origin");
+      for (uint32_t i = 0; i < count; ++i)
+        require(CGPointEqualToPoint(CGDisplayBounds(displays[i]).origin, bounds[i].origin), "reverse mirror restores user local origins");
+    }
     localFixture = nil;
     require(waitForRemoval(mirrorLocal), "reverse mirror fixture cleanup");
 
-    require(virtual_display_apply_layout("mirror", originalMain), "mirror acknowledgement");
-    require(waitForMirror(changed, originalMain, changed), "mirror capture targets master");
+    if (!mirrorBlocked) {
+      require(virtual_display_apply_layout("mirror", originalMain), "mirror acknowledgement");
+      require(waitForMirror(changed, originalMain, changed), "mirror capture targets master");
+      puts("PASS: native positive mirror coverage (reverse promotion and legacy mirror)");
+    }
     virtual_display_destroy();
     require(waitForRemoval(changed) && waitForMain(originalMain), "mirror cleanup restores local main");
     for (uint32_t i = 0; i < count; ++i)

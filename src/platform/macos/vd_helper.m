@@ -7,6 +7,8 @@
  *   layout: "extend" (default), "primary", "mirror", or "system"
  * Outputs: displayID on stdout (or "0" on failure)
  * Managed stdin accepts "layout local_main_id\n" and replies with the ID or 0.
+ * VirtualMac mirror admission fails before display changes: startup emits 0
+ * and exits with status 1; managed commands emit 0 and retain the display.
  * EOF or a termination signal releases the display, then restores local layout.
  *
  * CGVirtualDisplay creates the display object, then we:
@@ -38,6 +40,7 @@
 #include <errno.h>
 #include <stdatomic.h>
 #include <time.h>
+#include "virtual_display_mirror.h"
 
 // Private CGVirtualDisplay API interface declarations (macOS 14+)
 @interface CGVirtualDisplayMode : NSObject
@@ -363,6 +366,7 @@ static BOOL releaseDisplayAndRestore(void) {
 }
 
 static BOOL applyLayout(CGDirectDisplayID virtualID, vd_layout_t layout, CGDirectDisplayID preferred) {
+  if (layout == VD_LAYOUT_MIRROR && !vd_mirror_request_allowed("mirror")) return NO;
   DisplayLists lists;
   if (atomic_load(&displayTerminated) || !readDisplayLists(&lists) ||
       !listedDisplay(lists.online, lists.onlineCount, virtualID)) return NO;
@@ -483,6 +487,12 @@ static int runHelper(int argc, const char *argv[]) {
     int height = atoi(argv[2]);
     int fps = atoi(argv[3]);
     vd_layout_t layout = parseLayout(argc >= 5 ? argv[4] : NULL);
+
+    if (layout == VD_LAYOUT_MIRROR && !vd_mirror_request_allowed("mirror")) {
+      fprintf(stdout, "0\n");
+      fflush(stdout);
+      return 1;
+    }
 
     if (width <= 0 || height <= 0 || fps <= 0) {
       fprintf(stdout, "0\n");
