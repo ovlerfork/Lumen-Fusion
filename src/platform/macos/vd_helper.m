@@ -331,12 +331,23 @@ static BOOL restoreLayout(void) {
 static BOOL releaseDisplayAndRestore(void) {
   if (!keepAlive && !layoutChanged) return YES;
   CGDirectDisplayID id = keepAlive.displayID;
-  // Capture locals plugged in since the last layout command while the old
-  // coordinate frame and our virtual display still exist.
-  if (id && layoutChanged) {
+  // Capture locals while the current coordinate frame still exists. Removing
+  // a VD can also retile locals in system mode, so preserve the user's latest
+  // arrangement in that mode rather than restoring the startup snapshot.
+  if (id) {
     DisplayLists lists;
-    if (readDisplayLists(&lists)) rememberDisplays(&lists);
-    else fprintf(stderr, "[vd_helper] Could not snapshot locals before release\n");
+    if (readDisplayLists(&lists)) {
+      if (!layoutChanged) {
+        [originalOrigins removeAllObjects];
+        [originalMirrors removeAllObjects];
+        appliedTranslation = NSZeroPoint;
+        originalMain = lists.activeCount ? lists.active[0] : 0;
+        rememberDisplays(&lists);
+        layoutChanged = originalOrigins.count != 0;
+      } else {
+        rememberDisplays(&lists);
+      }
+    } else fprintf(stderr, "[vd_helper] Could not snapshot locals before release\n");
   }
   logLayout("before virtual display release");
   @autoreleasepool {
