@@ -81,7 +81,7 @@ run_case() {
   local name="$1" codec="$2" variant="$3" mode="$4" qos="$5" rc
   echo "--- $name ---"
   "$binary" --benchmark --codec "$codec" --variant "$variant" "$mode" --qos "$qos" \
-    --repeat "$repeat" --output "$output/$name" "${extra[@]}" > "$output/$name.log" 2>&1
+    --repeat "$repeat" --output "$output/$name" ${extra[@]+"${extra[@]}"} > "$output/$name.log" 2>&1
   rc=$?
   cat "$output/$name.log"
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$codec" "$variant" "$mode" "$qos" "$rc" >> "$output/cases.tsv"
