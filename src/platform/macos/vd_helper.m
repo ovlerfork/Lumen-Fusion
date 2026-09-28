@@ -735,16 +735,18 @@ static int runHelper(int argc, const char *argv[]) {
               CGDisplayMirrorsDisplay(resultID));
     }
 
-    // Reapply after the 1x mode switch so placement uses the final logical bounds.
-    if (layout != VD_LAYOUT_SYSTEM) applied = applyLayout(resultID, layout, 0) && applied;
+    // Reapply forced layouts after mode registration rather than preserving an
+    // early transient failure. System layout does not mutate the arrangement;
+    // its readiness is determined by the final topology check below.
+    applied = layout == VD_LAYOUT_SYSTEM || applyLayout(resultID, layout, 0);
     DisplayLists readyLists;
     BOOL complete = readDisplayLists(&readyLists);
     CGDirectDisplayID master = complete ? CGDisplayMirrorsDisplay(resultID) : 0;
     BOOL usable = !atomic_load(&displayTerminated) && complete && listedDisplay(readyLists.online, readyLists.onlineCount, resultID) &&
                   listedDisplay(readyLists.active, readyLists.activeCount, master ? master : resultID);
     CGDisplayModeRef observedMode = usable ? CGDisplayCopyDisplayMode(resultID) : NULL;
-    fprintf(stderr, "[vd_helper] Ready display=%u usable=%d requestedPixels=%dx%d observedPixels=%zux%zu master=%u\n",
-            resultID, usable, width, height,
+    fprintf(stderr, "[vd_helper] Ready display=%u usable=%d applied=%d requestedPixels=%dx%d observedPixels=%zux%zu master=%u\n",
+            resultID, usable, applied, width, height,
             observedMode ? CGDisplayModeGetPixelWidth(observedMode) : 0,
             observedMode ? CGDisplayModeGetPixelHeight(observedMode) : 0, master);
     if (observedMode) CGDisplayModeRelease(observedMode);

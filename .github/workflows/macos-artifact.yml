@@ -63,8 +63,6 @@ jobs:
         run: |
           mkdir -p "$DIAGNOSTICS"
           node --test tests/unit/test_config_save.mjs 2>&1 | tee "$DIAGNOSTICS/config-save.log"
-      - name: Validate native virtual display lifecycle
-        run: bash scripts/validate-macos-virtual-display.sh build-macos-zip/vd_helper
       - name: Package
         run: |
           bash scripts/macos_build.sh --step=zip
@@ -104,6 +102,8 @@ jobs:
         run: python3 scripts/validate-macos-login-item.py "$INSTALLED_APP" "$DIAGNOSTICS/login-item"
       - name: Validate packaged latency benchmark and compare encoder variants
         run: python3 scripts/validate-macos-benchmark.py "$INSTALLED_APP" "$DIAGNOSTICS/benchmark"
+      - name: Validate native virtual display lifecycle
+        run: bash scripts/validate-macos-virtual-display.sh build-macos-zip/vd_helper
       - name: Upload native test measurements
         if: always()
         uses: actions/upload-artifact@v4

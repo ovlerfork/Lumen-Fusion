@@ -260,7 +260,12 @@ static uint32_t createLocked(int width, int height, int fps, const char *layout)
   vd_channel = channel[2];
   uint32_t displayID = 0;
   vd_pending_reply = YES;
-  if (!readReply(&displayID, monotonicSeconds() + 10.0) || !displayID) { stopLocked(); return 0; }
+  BOOL replied = readReply(&displayID, monotonicSeconds() + 10.0);
+  if (!replied || !displayID) {
+    NSLog(@"[Sunshine] Virtual display startup failed: reply=%d display=%u", replied, displayID);
+    stopLocked();
+    return 0;
+  }
   vd_display_id = displayID;
   vd_width = width; vd_height = height; vd_fps = fps;
   if (!waitForCreationLocked()) {
