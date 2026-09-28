@@ -52,13 +52,14 @@ In Configuration → Audio/Video, enable the virtual display and select Adaptive
 With a usable local screen, disconnect removes the virtual extension by default.
 Without another screen, disconnect stops media while retaining the desktop for Resume.
 
-默认保留 600 秒；0 表示直到明确结束桌面会话。菜单栏“Virtual Desktop…”
-可查看状态并释放无人使用的桌面。电池供电时默认不阻止闲置睡眠，需明确勾选
-才启用电池保活；保留桌面本身不代表阻止睡眠，也不会解锁 Mac。
-The retention default is 600 seconds; 0 means until explicitly ending the desktop
-session. Use Virtual Desktop… in the menu bar to inspect/release an idle desktop.
-Battery keep-awake is opt-in. Retaining a desktop does not itself prevent sleep or
-unlock the Mac. Lid-close, manual, thermal and low-battery sleep remain system decisions.
+保留的桌面持续可用，直到明确结束会话、手动释放，或本地屏幕策略将其移除。
+菜单栏“Virtual Desktop…”可查看状态并释放无人使用的桌面。
+所选闲置睡眠保护在保留期间持续生效，不会解锁 Mac。
+A retained desktop remains available until explicitly ending the session, releasing
+it, or removal by the local-screen policy. Use Virtual Desktop… in the menu bar
+to inspect/release an idle desktop. The selected idle-sleep protection remains
+active during retention. It does not unlock the Mac. Lid-close, manual, thermal
+and low-battery sleep remain system decisions.
 
 部分显示器关闭后仍被系统报告为可用，可在同一配置区手动覆盖本地屏幕检测。
 恢复时保留原桌面模式；需要改变桌面分辨率或刷新率时，结束桌面会话再连接。

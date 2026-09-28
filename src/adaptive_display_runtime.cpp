@@ -94,8 +94,6 @@ namespace adaptive_display {
     p.adaptive = v.virtual_display_layout == "adaptive";
     p.local_retain = v.virtual_display_local_disconnect == "retain";
     p.headless_retain = v.virtual_display_headless_disconnect == "retain";
-    p.on_battery = v.virtual_display_retention_on_battery;
-    p.retention = std::chrono::seconds(v.virtual_display_retention_seconds);
     p.power = v.virtual_display_retention_power;
     p.override_local = v.virtual_display_local_override == "present" ? presence::present :
                        v.virtual_display_local_override == "absent" ? presence::absent : presence::unknown;

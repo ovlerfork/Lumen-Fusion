@@ -17,22 +17,14 @@ namespace adaptive_display {
     absent,
     present
   };
-  enum class power_source {
-    unknown,
-    battery,
-    external
-  };
   struct topology {
     presence local = presence::unknown;
     uint32_t local_main = 0;
-    power_source power = power_source::unknown;
   };
   struct policy {
     bool adaptive = true;
     bool local_retain = false;
     bool headless_retain = true;
-    bool on_battery = false;
-    std::chrono::seconds retention {600};
     std::string power = "display";
     presence override_local = presence::unknown;
   };
@@ -51,7 +43,6 @@ namespace adaptive_display {
     std::size_t preparing = 0, active = 0;
     bool paused = false, closed = false, revoked = false;
     presence role = presence::unknown;
-    std::optional<std::chrono::steady_clock::time_point> deadline;
     std::vector<token> revoked_owners;
   };
 
@@ -94,23 +85,21 @@ namespace adaptive_display {
     };
     bool matches(token t) const;
     topology inspect();
-    topology observe(clock::time_point now);
     bool update_role(const topology &t);
     bool may_retain(bool role_confirmed) const;
-    void update_retention_power(const topology &t);
-    void settle(bool disconnected, clock::time_point now);
+    void update_retention_power();
+    void settle(bool connected);
     void destroy();
     backend native;
     std::mutex mutex;
     std::map<uint64_t, owner> owners;
     uint64_t epoch = 0, next_attempt = 0;
     bool revoked = true, closed = false, paused = false;
-    bool retained = false, helper_failed = false, streaming_protected = false;
+    bool retained = false, disconnected = false, helper_failed = false, streaming_protected = false;
     uint32_t display = 0;
     policy rules;
     presence role = presence::unknown;
-    uint32_t local_main = 0, candidate_main = 0;
-    std::optional<clock::time_point> candidate_since, deadline, last_disconnect;
+    uint32_t local_main = 0;
   };
 
   // Runtime binding; unmanaged layouts receive an empty token.

@@ -81,9 +81,6 @@
 
         <!-- Tab content -->
         <div class="config-content">
-          <div class="alert alert-danger mb-4" role="alert" v-if="retentionError">
-            {{ $t(retentionError) }}
-          </div>
           <div class="alert alert-success mb-4" v-if="saved && !restarted">
             <b>{{ $t('_common.success') }}</b> {{ $t('config.apply_note') }}
           </div>
@@ -204,7 +201,6 @@
       return {
         platform: "",
         saved: false,
-        retentionError: "",
         restarted: false,
         config: null,
         currentTab: "general",
@@ -268,9 +264,7 @@
               "virtual_display_layout": "extend",
               "virtual_display_local_disconnect": "remove",
               "virtual_display_headless_disconnect": "retain",
-              "virtual_display_retention_seconds": 600,
               "virtual_display_retention_power": "display",
-              "virtual_display_retention_on_battery": "false",
               "virtual_display_local_override": "auto",
               "max_bitrate": 0,
               "minimum_fps_target": 0
@@ -496,24 +490,8 @@
         this.saved = false;
         this.restarted = false;
 
-        this.retentionError = "";
-        const retention = this.config.virtual_display_retention_seconds;
-        const seconds = Number(retention);
-        const validRetention = (typeof retention === "number" || (typeof retention === "string" && /^-?\d+$/.test(retention))) &&
-          Number.isInteger(seconds) && seconds >= 0 && seconds <= 2147483647;
-        const adaptiveEnabled = this.config.virtual_display === "enabled" && this.config.virtual_display_layout === "adaptive";
-        if (adaptiveEnabled && !validRetention) {
-          this.retentionError = "config.virtual_display_retention_seconds_error";
-          return Promise.resolve(false);
-        }
-
         // create a temp copy of this.config to use for the post request
         let config = this.serialize();
-        if (validRetention) {
-          config.virtual_display_retention_seconds = seconds;
-        } else {
-          delete config.virtual_display_retention_seconds;
-        }
 
         // delete default values from this.config
         this.tabs.forEach(tab => {

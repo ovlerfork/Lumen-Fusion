@@ -106,7 +106,6 @@
     "working_dir_desc": "应传递给进程的工作目录。例如，某些应用程序使用工作目录搜索配置文件。如果不设置，Lumina 将默认使用命令的父目录"
   },
   "config": {
-    "virtual_display_retention_seconds_error": "请输入 0 到 2147483647 的整数保留秒数。默认值为 600，即 10 分钟；0 表示保留直到明确退出应用。此字段不能为空。",
     "virtual_display": "虚拟显示器（仅 macOS）",
     "virtual_display_desc": "按需创建用于串流的虚拟显示器。默认禁用。",
     "virtual_display_layout": "虚拟显示器布局（仅 macOS）",
@@ -122,15 +121,11 @@
     "virtual_display_headless_disconnect": "没有其他可用本地显示器时",
     "virtual_display_remove": "移除桌面",
     "virtual_display_retain": "保留桌面",
-    "virtual_display_retention_seconds": "保留时长（秒）",
-    "virtual_display_retention_seconds_desc": "默认 600 秒，即 10 分钟。请输入 0 到 2147483647 的整数。0 表示保留桌面直到明确退出应用，不设置到期计时器。",
     "virtual_display_retention_power": "保留期间防止闲置睡眠",
     "virtual_display_retention_power_display": "防止显示器和系统闲置睡眠",
     "virtual_display_retention_power_system": "仅防止系统闲置睡眠",
     "virtual_display_retention_power_none": "不阻止闲置睡眠",
     "virtual_display_retention_power_desc": "防止闲置睡眠不会解锁 Mac，也不会绕过合盖、过热或低电量睡眠、手动锁屏或管理策略锁屏。",
-    "virtual_display_retention_on_battery": "允许使用电池时防止闲置睡眠",
-    "virtual_display_retention_on_battery_desc": "默认关闭：使用电池时，保留桌面不会持有防止闲置睡眠的电源断言，Mac 可能进入睡眠。启用后，所选电源策略也会应用于电池供电，可能增加耗电量。",
     "virtual_display_local_override": "本地显示器检测",
     "virtual_display_local_override_auto": "自动",
     "virtual_display_local_override_present": "视为存在本地显示器",

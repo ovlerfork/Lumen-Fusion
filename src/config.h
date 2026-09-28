@@ -160,9 +160,7 @@ namespace config {
     // Retention policy applies only to the adaptive layout.
     std::string virtual_display_local_disconnect;  ///< "remove" or "retain" when another usable local display exists.
     std::string virtual_display_headless_disconnect;  ///< "retain" or "remove" when no usable local display exists.
-    int virtual_display_retention_seconds;  ///< Adaptive retention duration in seconds; 0 means until explicit Quit.
     std::string virtual_display_retention_power;  ///< "display", "system" or "none" idle-sleep policy during adaptive retention.
-    bool virtual_display_retention_on_battery;  ///< Allow adaptive retention power assertions on battery.
     std::string virtual_display_local_override;  ///< "auto", "present" or "absent" local-display detection override.
 
     int max_bitrate;  // Maximum bitrate, sets ceiling in kbps for bitrate requested from client

@@ -4,7 +4,6 @@
  */
 // standard includes
 #include <algorithm>
-#include <charconv>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -511,9 +510,7 @@ namespace config {
     "extend"s,  // virtual_display_layout
     "remove"s,  // virtual_display_local_disconnect
     "retain"s,  // virtual_display_headless_disconnect
-    600,  // virtual_display_retention_seconds
     "display"s,  // virtual_display_retention_power
-    false,  // virtual_display_retention_on_battery
     "auto"s,  // virtual_display_local_override
 
     0,  // max_bitrate
@@ -1170,24 +1167,7 @@ namespace config {
     string_restricted_f(vars, "virtual_display_layout", video.virtual_display_layout, {"extend", "mirror", "system", "adaptive", "primary"});
     string_restricted_f(vars, "virtual_display_local_disconnect", video.virtual_display_local_disconnect, {"remove", "retain"});
     string_restricted_f(vars, "virtual_display_headless_disconnect", video.virtual_display_headless_disconnect, {"retain", "remove"});
-    int_f(vars, "virtual_display_retention_seconds", video.virtual_display_retention_seconds, [](const std::string &value) {
-      int seconds;
-      const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), seconds);
-      if (error == std::errc {} && end == value.data() + value.size() && seconds >= 0) {
-        return seconds;
-      }
-      return video.virtual_display_retention_seconds;
-    });
     string_restricted_f(vars, "virtual_display_retention_power", video.virtual_display_retention_power, {"display", "system", "none"});
-    generic_f(vars, "virtual_display_retention_on_battery", video.virtual_display_retention_on_battery, [](const std::string &value) {
-      if (value == "true" || value == "yes" || value == "enable" || value == "enabled" || value == "on" || value == "1") {
-        return true;
-      }
-      if (value == "false" || value == "no" || value == "disable" || value == "disabled" || value == "off" || value == "0") {
-        return false;
-      }
-      return video.virtual_display_retention_on_battery;
-    });
     string_restricted_f(vars, "virtual_display_local_override", video.virtual_display_local_override, {"auto", "present", "absent"});
 
     generic_f(vars, "dd_configuration_option", video.dd.configuration_option, dd::config_option_from_view);

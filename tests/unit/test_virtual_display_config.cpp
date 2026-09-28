@@ -5,7 +5,6 @@
 #include "../tests_common.h"
 
 #include <filesystem>
-#include <limits>
 
 #include "src/config.h"
 
@@ -54,9 +53,7 @@ TEST_F(VirtualDisplayConfigTest, DefaultsAndInvalidValuesPreserveExistingLayout)
   EXPECT_EQ(config::video.virtual_display_layout, "extend");
   EXPECT_EQ(config::video.virtual_display_local_disconnect, "remove");
   EXPECT_EQ(config::video.virtual_display_headless_disconnect, "retain");
-  EXPECT_EQ(config::video.virtual_display_retention_seconds, 600);
   EXPECT_EQ(config::video.virtual_display_retention_power, "display");
-  EXPECT_FALSE(config::video.virtual_display_retention_on_battery);
   EXPECT_EQ(config::video.virtual_display_local_override, "auto");
 
   apply("virtual_display = invalid\n"
@@ -64,14 +61,12 @@ TEST_F(VirtualDisplayConfigTest, DefaultsAndInvalidValuesPreserveExistingLayout)
         "virtual_display_local_disconnect = invalid\n"
         "virtual_display_headless_disconnect = invalid\n"
         "virtual_display_retention_power = invalid\n"
-        "virtual_display_retention_on_battery = invalid1\n"
         "virtual_display_local_override = invalid\n");
   EXPECT_EQ(config::video.virtual_display, "disabled");
   EXPECT_EQ(config::video.virtual_display_layout, "extend");
   EXPECT_EQ(config::video.virtual_display_local_disconnect, "remove");
   EXPECT_EQ(config::video.virtual_display_headless_disconnect, "retain");
   EXPECT_EQ(config::video.virtual_display_retention_power, "display");
-  EXPECT_FALSE(config::video.virtual_display_retention_on_battery);
   EXPECT_EQ(config::video.virtual_display_local_override, "auto");
 }
 
@@ -84,33 +79,16 @@ TEST_F(VirtualDisplayConfigTest, AcceptsLayoutsAndAdaptivePolicies) {
         "virtual_display_layout = adaptive\n"
         "virtual_display_local_disconnect = retain\n"
         "virtual_display_headless_disconnect = remove\n"
-        "virtual_display_retention_on_battery = true\n"
         "virtual_display_retention_power = system\n"
         "virtual_display_local_override = present\n");
   EXPECT_EQ(config::video.virtual_display, "enabled");
   EXPECT_EQ(config::video.virtual_display_layout, "adaptive");
   EXPECT_EQ(config::video.virtual_display_local_disconnect, "retain");
   EXPECT_EQ(config::video.virtual_display_headless_disconnect, "remove");
-  EXPECT_TRUE(config::video.virtual_display_retention_on_battery);
   EXPECT_EQ(config::video.virtual_display_retention_power, "system");
   EXPECT_EQ(config::video.virtual_display_local_override, "present");
   apply("virtual_display_retention_power = none\n"
-        "virtual_display_local_override = absent\n"
-        "virtual_display_retention_on_battery = false\n");
+        "virtual_display_local_override = absent\n");
   EXPECT_EQ(config::video.virtual_display_retention_power, "none");
   EXPECT_EQ(config::video.virtual_display_local_override, "absent");
-  EXPECT_FALSE(config::video.virtual_display_retention_on_battery);
-}
-
-TEST_F(VirtualDisplayConfigTest, RetentionSecondsRequireBoundedWholeDecimalSeconds) {
-  for (const auto seconds : {0, 600, std::numeric_limits<int>::max()}) {
-    apply("virtual_display_retention_seconds = " + std::to_string(seconds));
-    EXPECT_EQ(config::video.virtual_display_retention_seconds, seconds);
-  }
-  apply("virtual_display_retention_seconds = 600");
-  for (const auto *invalid : {"-1", "2147483648", "4294967296", "999999999999999999999", "1.5", "600s", "invalid", "0x10", ""}) {
-    SCOPED_TRACE(invalid);
-    apply(std::string {"virtual_display_retention_seconds = "} + invalid);
-    EXPECT_EQ(config::video.virtual_display_retention_seconds, 600);
-  }
 }

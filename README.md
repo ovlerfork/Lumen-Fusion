@@ -46,9 +46,9 @@ In **Configuration → Audio/Video**, enable the virtual display and select **Ad
 | A local screen returns while streaming | The virtual screen becomes an extension without ending its active stream. |
 | Explicitly end the remote desktop session or quit Lumen Fusion | Retained desktop resources and the app's idle-power assertions are released. |
 
-The local-screen and headless disconnect actions are independently configurable. Retention defaults to **600 seconds (10 minutes)**; **0** keeps the desktop until you explicitly end the session or release it. The menu-bar **Virtual Desktop…** entry shows its state and allows releasing an unused desktop. No capture, video/audio encoding, or media packet loop is kept running solely for retention; applications and WindowServer may still render their own content.
+The local-screen and headless disconnect actions are independently configurable. A retained desktop stays available for Resume until you explicitly end the session or release it, or the configured local-screen policy removes it. The menu-bar **Virtual Desktop…** entry shows its state and allows releasing an unused desktop. No capture, video/audio encoding, or media packet loop is kept running solely for retention; applications and WindowServer may still render their own content.
 
-The power setting can prevent system idle sleep, prevent both display and system idle sleep, or leave idle sleep unrestricted. **Battery keep-awake is off by default**: a retained desktop can remain, but disallowed idle-power assertions are released. Permit battery keep-awake explicitly when needed, including if turning off a USB-C monitor also removes charging power. Unknown power state does not grant indefinite keep-awake.
+The power setting can prevent system idle sleep, prevent both display and system idle sleep, or leave idle sleep unrestricted. The selected idle-sleep protection remains active while the desktop is retained.
 
 Display detection excludes this app's virtual screen and checks active/awake local outputs and closed-lid state. Some monitors or docks continue advertising a powered-off panel; **Local display detection → Treat as absent/present** provides an override. Detection is not a guarantee that the panel is physically visible. Windows and full-screen Spaces are managed by macOS; not every application's window placement can be guaranteed.
 

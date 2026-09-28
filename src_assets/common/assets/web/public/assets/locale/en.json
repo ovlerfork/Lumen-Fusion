@@ -106,7 +106,6 @@
     "working_dir_desc": "The working directory that should be passed to the process. For example, some applications use the working directory to search for configuration files. If not set, Lumina will default to the parent directory of the command"
   },
   "config": {
-    "virtual_display_retention_seconds_error": "Enter a whole retention duration from 0 to 2147483647 seconds. Use 600 for the default (10 minutes), or 0 to retain until explicit Quit. This field cannot be blank.",
     "virtual_display_layout_extend": "Extend",
     "virtual_display_layout_mirror": "Mirror",
     "virtual_display_layout_system": "Use system setting",
@@ -118,15 +117,11 @@
     "virtual_display_headless_disconnect": "Without another usable local display",
     "virtual_display_remove": "Remove desktop",
     "virtual_display_retain": "Retain desktop",
-    "virtual_display_retention_seconds": "Retention duration (seconds)",
-    "virtual_display_retention_seconds_desc": "Default: 600 seconds (10 minutes). Enter a whole number from 0 to 2147483647. 0 retains the desktop until explicit Quit, with no expiry timer.",
     "virtual_display_retention_power": "Idle-sleep prevention during retention",
     "virtual_display_retention_power_display": "Prevent display and system idle sleep",
     "virtual_display_retention_power_system": "Prevent system idle sleep only",
     "virtual_display_retention_power_none": "No idle-sleep prevention",
     "virtual_display_retention_power_desc": "Idle-sleep prevention does not unlock the Mac or bypass lid-close, thermal or low-battery sleep, manual locks or managed lock policies.",
-    "virtual_display_retention_on_battery": "Allow idle-sleep prevention on battery",
-    "virtual_display_retention_on_battery_desc": "Off by default: retention does not hold idle-sleep assertions on battery, so the Mac may sleep. Enabling this applies the selected power policy on battery and can increase battery use.",
     "virtual_display_local_override": "Local-display detection",
     "virtual_display_local_override_auto": "Automatic",
     "virtual_display_local_override_present": "Treat local display as present",

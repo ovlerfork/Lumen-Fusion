@@ -5,8 +5,6 @@
 #import <AppKit/AppKit.h>
 #include <CoreGraphics/CoreGraphics.h>
 #include <IOKit/IOKitLib.h>
-#include <IOKit/ps/IOPowerSources.h>
-#include <IOKit/ps/IOPSKeys.h>
 #include <IOKit/pwr_mgt/IOPMLib.h>
 
 #include <algorithm>
@@ -55,15 +53,6 @@ namespace adaptive_display {
 
     topology inspect(uint32_t own_display) {
       topology result;
-      if (auto info = IOPSCopyPowerSourcesInfo()) {
-        auto source = IOPSGetProvidingPowerSourceType(info);
-        if (source) {
-          result.power = CFEqual(source, CFSTR(kIOPSACPowerValue)) ? power_source::external :
-                         CFEqual(source, CFSTR(kIOPSBatteryPowerValue)) ? power_source::battery : power_source::unknown;
-        }
-        CFRelease(info);
-      }
-
       std::optional<bool> lid_closed;
       auto root = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPMrootDomain"));
       if (root) {
@@ -165,8 +154,7 @@ namespace adaptive_display {
     const auto s = snapshot();
     NSString *message = !s.display ? @"No retained virtual desktop." :
                         s.preparing || s.active ? @"Virtual desktop is in use. Release is available after clients disconnect." :
-                        s.deadline ? @"Virtual desktop retained for Resume until its retention deadline." :
-                                     @"Virtual desktop retained for Resume until Quit.";
+                                                 @"Virtual desktop retained for Resume until Quit.";
     NSAlert *panel = [[NSAlert alloc] init];
     panel.messageText = @"Virtual Desktop";
     panel.informativeText = message;

@@ -106,12 +106,6 @@ const config = ref(props.config)
             </select>
           </div>
           <div class="mb-3">
-            <label for="virtual_display_retention_seconds" class="form-label">{{ $t('config.virtual_display_retention_seconds') }}</label>
-            <input type="number" class="form-control" id="virtual_display_retention_seconds" min="0" max="2147483647" step="1"
-                   v-model="config.virtual_display_retention_seconds" />
-            <div class="form-text">{{ $t('config.virtual_display_retention_seconds_desc') }}</div>
-          </div>
-          <div class="mb-3">
             <label for="virtual_display_retention_power" class="form-label">{{ $t('config.virtual_display_retention_power') }}</label>
             <select class="form-select" id="virtual_display_retention_power" v-model="config.virtual_display_retention_power">
               <option value="display">{{ $t('config.virtual_display_retention_power_display') }}</option>
@@ -120,12 +114,6 @@ const config = ref(props.config)
             </select>
             <div class="form-text">{{ $t('config.virtual_display_retention_power_desc') }}</div>
           </div>
-          <Checkbox class="mb-3"
-                    id="virtual_display_retention_on_battery"
-                    locale-prefix="config"
-                    v-model="config.virtual_display_retention_on_battery"
-                    default="false"
-          ></Checkbox>
           <div class="mb-3">
             <label for="virtual_display_local_override" class="form-label">{{ $t('config.virtual_display_local_override') }}</label>
             <select class="form-select" id="virtual_display_local_override" v-model="config.virtual_display_local_override">

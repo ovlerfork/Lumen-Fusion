@@ -83,9 +83,7 @@ namespace {
 
   TEST(AdaptiveDisplayNative, InspectsCurrentTopologyWithoutCreatingDisplay) {
     const auto current = adaptive_display::macos_backend().inspect(0);
-    using adaptive_display::power_source;
     using adaptive_display::presence;
-    EXPECT_TRUE(current.power == power_source::unknown || current.power == power_source::battery || current.power == power_source::external);
     EXPECT_TRUE(current.local == presence::unknown || current.local == presence::absent || current.local == presence::present);
     if (current.local == presence::present) {
       EXPECT_NE(current.local_main, 0u);

@@ -15,22 +15,6 @@ namespace adaptive_display {
     return t;
   }
 
-  topology controller::observe(clock::time_point now) {
-    auto t = inspect();
-    if (t.local == presence::present && (role != t.local || local_main != t.local_main)) {
-      if (!candidate_since || candidate_main != t.local_main) {
-        candidate_since = now;
-        candidate_main = t.local_main;
-      }
-      if (now - *candidate_since < std::chrono::seconds(2)) {
-        t.local = presence::unknown;
-      }
-    } else {
-      candidate_since.reset();
-    }
-    return t;
-  }
-
   bool controller::update_role(const topology &t) {
     if (!rules.adaptive) {
       return true;
@@ -59,10 +43,8 @@ namespace adaptive_display {
     return !role_confirmed || (role == presence::present ? rules.local_retain : rules.headless_retain);
   }
 
-  void controller::update_retention_power(const topology &t) {
-    const bool permitted = t.power == power_source::external ||
-                           (t.power == power_source::battery && rules.on_battery);
-    native.retention_power((retained || last_disconnect) && !streaming_protected && permitted ? rules.power : "none");
+  void controller::update_retention_power() {
+    native.retention_power((retained || disconnected) && !streaming_protected ? rules.power : "none");
   }
 
   void controller::destroy() {
@@ -72,16 +54,14 @@ namespace adaptive_display {
     native.retention_power("none");
     display = 0;
     paused = false;
-    deadline.reset();
-    candidate_since.reset();
     role = presence::unknown;
     local_main = 0;
-    last_disconnect.reset();
+    disconnected = false;
     retained = false;
     helper_failed = false;
   }
 
-  token controller::prepare(bool new_launch, mode requested, policy requested_rules, clock::time_point now) {
+  token controller::prepare(bool new_launch, mode requested, policy requested_rules, clock::time_point) {
     std::lock_guard lock(mutex);
     if (closed || requested.width <= 0 || requested.height <= 0 || requested.fps <= 0) {
       return {};
@@ -99,9 +79,6 @@ namespace adaptive_display {
     }
     if (helper_failed && !owners.empty()) {
       return {};
-    }
-    if (display && owners.empty() && deadline && now >= *deadline) {
-      destroy();
     }
     if (display && !native.healthy(display)) {
       if (!owners.empty()) {
@@ -124,10 +101,9 @@ namespace adaptive_display {
     } else if (!native.ready(display)) {
       return {};
     }
-    // A retained desktop's mode and deadline remain unchanged until a successful
-    // connection ends. Failed Resume attempts cannot replenish the idle budget.
+    // Failed Resume attempts preserve the retained desktop and its mode.
     paused = false;
-    update_retention_power(inspect());
+    update_retention_power();
     const token result {epoch, ++next_attempt};
     owners.emplace(result.attempt, owner {});
     return result;
@@ -151,27 +127,26 @@ namespace adaptive_display {
     std::lock_guard lock(mutex);
     if (matches(t) && !revoked && !helper_failed && owners.at(t.attempt).active) {
       owners.at(t.attempt).established = true;
-      deadline.reset();
-      last_disconnect.reset();
+      disconnected = false;
     }
   }
 
   void controller::streaming_power(bool protected_by_stream) {
     std::lock_guard lock(mutex);
     streaming_protected = protected_by_stream;
-    update_retention_power(inspect());
+    update_retention_power();
   }
 
-  void controller::settle(bool disconnected, clock::time_point now) {
-    if (disconnected) {
-      last_disconnect = now;
+  void controller::settle(bool connected) {
+    if (connected) {
+      disconnected = true;
     }
-    const auto t = observe(now);
+    const auto t = inspect();
     if (!owners.empty()) {
-      update_retention_power(t);
+      update_retention_power();
       return;
     }
-    if (!display || !native.healthy(display) || (!last_disconnect && !deadline && !retained)) {
+    if (!display || !native.healthy(display) || (!disconnected && !retained)) {
       // A failed first connection has no retained desktop to restore.
       destroy();
       return;
@@ -181,35 +156,28 @@ namespace adaptive_display {
       destroy();
       return;
     }
-    if (last_disconnect) {
-      deadline = rules.retention.count() == 0 ? std::nullopt : std::optional(*last_disconnect + rules.retention);
-    }
-    if (deadline && now >= *deadline) {
-      destroy();
-      return;
-    }
-    last_disconnect.reset();
+    disconnected = false;
     paused = retained = true;
-    update_retention_power(t);
+    update_retention_power();
   }
 
-  void controller::finish(token t, clock::time_point now) {
+  void controller::finish(token t, clock::time_point) {
     std::lock_guard lock(mutex);
     if (!matches(t)) {
       return;
     }
     bool connected = owners.at(t.attempt).established;
     owners.erase(t.attempt);
-    settle(connected, now);
+    settle(connected);
   }
 
-  void controller::abort(token t, clock::time_point now) {
+  void controller::abort(token t, clock::time_point) {
     std::lock_guard lock(mutex);
     if (!matches(t) || owners.at(t.attempt).active) {
       return;
     }
     owners.erase(t.attempt);
-    settle(false, now);
+    settle(false);
   }
 
   void controller::revoke(uint64_t target_epoch) {
@@ -235,7 +203,7 @@ namespace adaptive_display {
     return true;
   }
 
-  void controller::reconcile(clock::time_point now) {
+  void controller::reconcile(clock::time_point) {
     std::lock_guard lock(mutex);
     if (!display) {
       return;
@@ -248,12 +216,12 @@ namespace adaptive_display {
       }
       return;
     }
-    auto t = observe(now);
+    auto t = inspect();
     const bool role_confirmed = update_role(t);
-    if (owners.empty() && (revoked || helper_failed || !may_retain(role_confirmed) || (deadline && now >= *deadline))) {
+    if (owners.empty() && (revoked || helper_failed || !may_retain(role_confirmed))) {
       destroy();
     } else {
-      update_retention_power(t);
+      update_retention_power();
     }
   }
 
@@ -270,7 +238,7 @@ namespace adaptive_display {
 
   status controller::snapshot() {
     std::lock_guard lock(mutex);
-    status result {display, 0, 0, paused, closed, revoked || helper_failed, role, deadline, {}};
+    status result {display, 0, 0, paused, closed, revoked || helper_failed, role, {}};
     for (const auto &[id, o] : owners) {
       o.active ? ++result.active : ++result.preparing;
       if (o.active && result.revoked) {
