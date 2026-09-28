@@ -8,16 +8,17 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
-#include <fstream>
 #include <iostream>
 #include <limits>
 #include <memory>
 #include <numeric>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -29,9 +30,12 @@
 
 #import <Foundation/Foundation.h>
 #include <dlfcn.h>
+#include <fcntl.h>
 #include <pthread.h>
 #include <sys/qos.h>
+#include <sys/stat.h>
 #include <sys/utsname.h>
+#include <unistd.h>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -39,6 +43,7 @@ extern "C" {
 }
 
 #include "src/config.h"
+#include "src/utility.h"
 
 namespace {
   using clock_type = std::chrono::steady_clock;
@@ -141,7 +146,8 @@ namespace {
     require(std::filesystem::is_directory(o.output.parent_path()), "--output parent directory must exist");
     for (int run = 1; run <= o.repeat; ++run) {
       const auto prefix = o.output.string() + "-r" + std::to_string(run);
-      require(!std::filesystem::exists(prefix + ".csv") && !std::filesystem::exists(prefix + ".json"),
+      require(!std::filesystem::exists(std::filesystem::symlink_status(prefix + ".csv")) &&
+                !std::filesystem::exists(std::filesystem::symlink_status(prefix + ".json")),
               "Output already exists: " + prefix);
     }
     return o;
@@ -526,7 +532,8 @@ namespace {
     Dl_info library {};
     const bool have_library = dladdr(reinterpret_cast<const void *>(&avcodec_version), &library) != 0;
     int relative_priority = 0;
-    const auto qos = pthread_get_qos_class_np(pthread_self(), &relative_priority);
+    qos_class_t qos = QOS_CLASS_UNSPECIFIED;
+    const int qos_status = pthread_get_qos_class_np(pthread_self(), &qos, &relative_priority);
     int policy = 0;
     struct sched_param scheduling {};
     const int schedule_status = pthread_getschedparam(pthread_self(), &policy, &scheduling);
@@ -544,7 +551,7 @@ namespace {
       {"avcodec_image", have_library && library.dli_fname ? library.dli_fname : "unknown"},
       {"build", "optimized NDEBUG app"},
       {"scheduling", {{"requested_qos", o.user_initiated ? "user-initiated" : "inherit"},
-                      {"effective_qos", qos}, {"qos_relative_priority", relative_priority},
+                      {"effective_qos", qos}, {"qos_status", qos_status}, {"qos_relative_priority", relative_priority},
                       {"pthread_status", schedule_status}, {"policy", policy}, {"priority", scheduling.sched_priority}}},
       {"requested", {{"codec", o.codec}, {"encoder", o.codec + "_videotoolbox"},
                      {"profile", o.codec == "h264" ? "H264High" : "HEVCMain"},
@@ -592,9 +599,7 @@ namespace {
       }));
     }
     const auto prefix = o.output.string() + "-r" + std::to_string(run);
-    std::ofstream csv(prefix + ".csv");
-    std::ofstream structured(prefix + ".json");
-    require(csv.good() && structured.good(), "Cannot open output files: " + prefix);
+    std::ostringstream csv;
     for (size_t column = 0; column < report["columns"].size(); ++column) {
       csv << (column ? "," : "") << report["columns"][column].get<std::string>();
     }
@@ -608,10 +613,51 @@ namespace {
       }
       csv << '\n';
     }
-    structured << report.dump(2) << '\n';
-    csv.close();
-    structured.close();
-    require(!csv.fail() && !structured.fail(), "Failed to write output files: " + prefix);
+    require(!csv.fail(), "Cannot serialize CSV: " + prefix);
+    const std::array<std::string, 2> contents {csv.str(), report.dump(2) + '\n'};
+    struct output_file {
+      std::string path;
+      int fd = -1;
+      struct stat identity {};
+      bool identified = false;
+    };
+    std::array<output_file, 2> files {{{prefix + ".csv"}, {prefix + ".json"}}};
+    auto cleanup = util::fail_guard([&]() {
+      for (auto &file : files) {
+        struct stat current {};
+        // A replaced path belongs to someone else, even if this write failed.
+        if (file.identified && ::lstat(file.path.c_str(), &current) == 0 &&
+            current.st_dev == file.identity.st_dev && current.st_ino == file.identity.st_ino) {
+          ::unlink(file.path.c_str());
+        }
+        if (file.fd >= 0) {
+          ::close(file.fd);
+        }
+      }
+    });
+    for (auto &file : files) {
+      file.fd = ::open(file.path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+      require(file.fd >= 0, "Cannot exclusively create " + file.path + ": " + std::strerror(errno));
+      file.identified = ::fstat(file.fd, &file.identity) == 0;
+      require(file.identified, "Cannot identify output file: " + file.path);
+    }
+    for (size_t i = 0; i < files.size(); ++i) {
+      std::string_view remaining = contents[i];
+      while (!remaining.empty()) {
+        const auto written = ::write(files[i].fd, remaining.data(), remaining.size());
+        if (written < 0 && errno == EINTR) {
+          continue;
+        }
+        require(written > 0, "Failed to write output file: " + files[i].path);
+        remaining.remove_prefix(static_cast<size_t>(written));
+      }
+    }
+    for (auto &file : files) {
+      const int status = ::close(file.fd);
+      file.fd = -1;
+      require(status == 0, "Failed to close output file: " + file.path);
+    }
+    cleanup.disable();
     std::cout << "Encoder benchmark: " << prefix << ".{csv,json}; matched=" << o.frames
               << " encode_ms_p50=" << report["measured"]["submit_to_output_ms"]["p50"]
               << " encode_ms_p95=" << report["measured"]["submit_to_output_ms"]["p95"]

@@ -55,6 +55,16 @@ def main() -> None:
         invoke(['--width', '65'], 'invalid-dimensions.log', False)
         invoke(['--codec', 'hevc', '--variant', 'h264-cavlc'], 'invalid-variant.log', False)
         invoke(['--output', str(app / 'Contents/Resources/benchmark-output')], 'invalid-bundle-output.log', False)
+        dangling_prefix = diagnostics / 'dangling-result'
+        dangling = dangling_prefix.with_name(dangling_prefix.name + '-r1.json')
+        target = diagnostics / 'dangling-target'
+        require(not os.path.lexists(target), 'Dangling-symlink test target already exists')
+        dangling.symlink_to(target)
+        invoke(['--output', str(dangling_prefix), '--frames', '2', '--warmup', '0'],
+               'dangling-output.log', False)
+        require(dangling.is_symlink() and dangling.readlink() == target and not os.path.lexists(target),
+                'Benchmark changed a dangling result symlink or created its target')
+        require(not os.path.lexists(str(dangling_prefix) + '-r1.csv'), 'Benchmark left a partial CSV')
         cases = diagnostics / 'cases'
         result = subprocess.run(['/bin/bash', str(wrapper), '--app', str(app), '--output', str(cases),
                                  '--repeat', '2'], env=env, text=True, stdout=subprocess.PIPE,
