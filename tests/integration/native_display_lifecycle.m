@@ -404,6 +404,35 @@ static BOOL waitForDisplays(const CGDirectDisplayID *expected, uint32_t expected
   return NO;
 }
 
+static BOOL waitForGeometry(const CGDirectDisplayID *expected, const CGRect *bounds,
+                            uint32_t expectedCount, CGDirectDisplayID main) {
+  for (int attempt = 0; attempt < 100; ++attempt) {
+    // A helper reply can precede this process's display notifications even when
+    // the main display is unchanged. Pump before accepting the full arrangement.
+    if (CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.1, false) == kCFRunLoopRunFinished)
+      usleep(100000);
+    CGDirectDisplayID online[64], active[64];
+    uint32_t onlineCount = 0, activeCount = 0;
+    if (CGGetOnlineDisplayList(64, online, &onlineCount) != kCGErrorSuccess || onlineCount != expectedCount ||
+        CGGetActiveDisplayList(64, active, &activeCount) != kCGErrorSuccess || activeCount != expectedCount ||
+        active[0] != main || CGMainDisplayID() != main) continue;
+    BOOL matches = YES;
+    for (uint32_t i = 0; i < expectedCount; ++i) {
+      BOOL foundOnline = NO, foundActive = NO;
+      for (uint32_t j = 0; j < onlineCount; ++j) foundOnline |= online[j] == expected[i];
+      for (uint32_t j = 0; j < activeCount; ++j) foundActive |= active[j] == expected[i];
+      matches &= foundOnline && foundActive && !CGDisplayMirrorsDisplay(expected[i]) &&
+                 CGRectEqualToRect(CGDisplayBounds(expected[i]), bounds[i]);
+    }
+    if (matches) return YES;
+  }
+  for (uint32_t i = 0; i < expectedCount; ++i)
+    fprintf(stderr, "[native_display_lifecycle] expected geometry display=%u bounds=(%.0f,%.0f %.0fx%.0f)\n",
+            expected[i], bounds[i].origin.x, bounds[i].origin.y, bounds[i].size.width, bounds[i].size.height);
+  logDisplays("geometry wait expired");
+  return NO;
+}
+
 // Observe the real mirror set in this process, after servicing its own display
 // notifications. A reply or a scalar mirror ID alone is insufficient.
 static BOOL waitForMirror(CGDirectDisplayID slave, CGDirectDisplayID master, CGDirectDisplayID owned) {
@@ -506,9 +535,9 @@ static CGDirectDisplayID addLocalDisplayWithMode(CGPoint origin, BOOL insertBefo
     CGError cancelErr = CGCancelDisplayConfiguration(config);
     fprintf(stderr, "[native_display_lifecycle] fixture cancel error=%d\n", cancelErr);
   }
-  require(err == kCGErrorSuccess, "fixture positioned to the right");
+  require(err == kCGErrorSuccess, "fixture arrangement completed");
   require(waitForDisplays(expected, existingCount + 1, YES), "fixture topology active");
-  require(waitForMain(main), "fixture preserves virtual main");
+  require(waitForMain(main), "fixture preserves main");
   require(CGPointEqualToPoint(CGDisplayBounds(id).origin, origin), "fixture has exact requested origin");
   for (uint32_t i = 0; i < existingCount; ++i) {
     require(CGPointEqualToPoint(CGDisplayBounds(expected[i]).origin, before[i].origin), "fixture preserves requested existing origins");
@@ -807,15 +836,30 @@ int main(int argc, char **argv) {
     require(mode && CGDisplayModeGetPixelWidth(mode) == 1440 && CGDisplayModeGetPixelHeight(mode) == 900,
             "changed mode uses requested pixels");
     CGDisplayModeRelease(mode);
-    // Keep the runner's display independent while exercising reversal with an
-    // owned local fixture. Remember its independent origin before mirroring it.
+    // Attach the fixture to the leftmost local, keeping the locals contiguous
+    // when extension places the owned VD at their right edge.
     right = 0;
-    for (uint32_t i = 0; i < count; ++i) right = MAX(right, CGRectGetMaxX(CGDisplayBounds(displays[i])));
-    right = MAX(right, CGRectGetMaxX(CGDisplayBounds(changed)));
-    CGPoint mirrorOrigin = CGPointMake(right, 0);
+    uint32_t leftmost = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+      right = MAX(right, CGRectGetMaxX(bounds[i]));
+      if (CGRectGetMinX(bounds[i]) < CGRectGetMinX(bounds[leftmost])) leftmost = i;
+    }
+    CGPoint mirrorOrigin = CGPointMake(CGRectGetMinX(bounds[leftmost]) - 1440, CGRectGetMinY(bounds[leftmost]));
     CGDirectDisplayID mirrorLocal = addLocalDisplayWithMode(mirrorOrigin, NO, 1440, 900, 60);
+    CGDirectDisplayID mirrorDisplays[64];
+    CGRect mirrorBounds[64];
+    require(count + 2 < 64, "complete mirror fixture geometry fits display list");
+    for (uint32_t i = 0; i < count; ++i) {
+      mirrorDisplays[i] = displays[i];
+      mirrorBounds[i] = bounds[i];
+    }
+    mirrorDisplays[count] = changed;
+    mirrorBounds[count] = CGRectMake(right, 0, 1440, 900);
+    mirrorDisplays[count + 1] = mirrorLocal;
+    mirrorBounds[count + 1] = CGRectMake(mirrorOrigin.x, mirrorOrigin.y, 1440, 900);
     pid_t mirrorHelper = observedHelper;
-    require(virtual_display_apply_layout("extend", originalMain) && waitForMain(originalMain),
+    require(virtual_display_apply_layout("extend", originalMain) &&
+            waitForGeometry(mirrorDisplays, mirrorBounds, count + 2, originalMain),
             "helper remembers independent mirror fixture");
     if (mirrorBlocked) {
       rejectedMirrorRequests(changed, mirrorLocal);
@@ -852,7 +896,8 @@ int main(int argc, char **argv) {
     if (!mirrorBlocked) {
       require(virtual_display_get_id() == changed && observedHelper == mirrorHelper,
               "reverse mirror retains same helper and VD");
-      require(virtual_display_apply_layout("extend", originalMain) && waitForMain(originalMain),
+      require(virtual_display_apply_layout("extend", originalMain) &&
+              waitForGeometry(mirrorDisplays, mirrorBounds, count + 2, originalMain),
               "extension restores local main after reverse mirror");
       CGDirectDisplayID independent[] = {changed, mirrorLocal};
       require(waitForDisplays(independent, 2, YES) && !CGDisplayMirrorsDisplay(mirrorLocal) &&
