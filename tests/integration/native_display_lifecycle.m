@@ -838,10 +838,8 @@ int main(int argc, char **argv) {
     CGDisplayModeRelease(mode);
     // Attach the fixture to the leftmost local, keeping the locals contiguous
     // when extension places the owned VD at their right edge.
-    right = 0;
     uint32_t leftmost = 0;
     for (uint32_t i = 0; i < count; ++i) {
-      right = MAX(right, CGRectGetMaxX(bounds[i]));
       if (CGRectGetMinX(bounds[i]) < CGRectGetMinX(bounds[leftmost])) leftmost = i;
     }
     CGPoint mirrorOrigin = CGPointMake(CGRectGetMinX(bounds[leftmost]) - 1440, CGRectGetMinY(bounds[leftmost]));
@@ -849,9 +847,17 @@ int main(int argc, char **argv) {
     CGDirectDisplayID mirrorDisplays[64];
     CGRect mirrorBounds[64];
     require(count + 2 < 64, "complete mirror fixture geometry fits display list");
+    // Local display modes can change while fixtures are attached. Layout keeps
+    // user origins, not the sizes captured before those mode changes.
+    right = 0;
     for (uint32_t i = 0; i < count; ++i) {
+      const CGRect current = CGDisplayBounds(displays[i]);
+      require(CGPointEqualToPoint(current.origin, bounds[i].origin),
+              "mirror setup preserves user local origins");
       mirrorDisplays[i] = displays[i];
-      mirrorBounds[i] = bounds[i];
+      mirrorBounds[i] = CGRectMake(bounds[i].origin.x, bounds[i].origin.y,
+                                  current.size.width, current.size.height);
+      right = MAX(right, CGRectGetMaxX(mirrorBounds[i]));
     }
     mirrorDisplays[count] = changed;
     mirrorBounds[count] = CGRectMake(right, 0, 1440, 900);
