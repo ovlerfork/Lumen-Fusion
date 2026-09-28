@@ -1,6 +1,7 @@
 <script setup>
 import { ref } from 'vue'
 import PlatformLayout from '../../PlatformLayout.vue'
+import Checkbox from '../../Checkbox.vue'
 
 const props = defineProps([
   'platform',
@@ -13,6 +14,13 @@ const config = ref(props.config)
 
 <template>
   <div class="config-page">
+    <Checkbox v-if="platform === 'macos'" class="mb-3"
+              id="streaming_performance_logging"
+              locale-prefix="config"
+              v-model="config.streaming_performance_logging"
+              :default="false"
+    ></Checkbox>
+
     <!-- FEC Percentage -->
     <div class="mb-3">
       <label for="fec_percentage" class="form-label">{{ $t('config.fec_percentage') }}</label>

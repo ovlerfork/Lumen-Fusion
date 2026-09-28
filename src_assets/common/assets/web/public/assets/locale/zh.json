@@ -106,6 +106,8 @@
     "working_dir_desc": "应传递给进程的工作目录。例如，某些应用程序使用工作目录搜索配置文件。如果不设置，Lumina 将默认使用命令的父目录"
   },
   "config": {
+    "streaming_performance_logging": "串流性能日志",
+    "streaming_performance_logging_desc": "会增加计时、统计和日志写入开销。测试时启用并应用设置、重启，测试结束后关闭。capture_to_send 仅测量主机从捕获到发送的耗时，不代表端到端延迟。需要构建包含性能日志支持，macOS 发布构建已包含。",
     "virtual_display": "虚拟显示器（仅 macOS）",
     "virtual_display_desc": "按需创建用于串流的虚拟显示器。默认禁用。",
     "virtual_display_layout": "虚拟显示器布局（仅 macOS）",

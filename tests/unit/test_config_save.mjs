@@ -7,6 +7,28 @@ const html = readFileSync(new URL('../../src_assets/common/assets/web/config.htm
 // Exercise the page's actual serialization, Save and Apply methods without mounting Vue.
 const methodsSource = html.slice(html.indexOf('      serialize() {'), html.indexOf('      handleSearch() {'));
 
+test('Save serializes performance logging as a boolean and omits the disabled default', async () => {
+  const bodies = [];
+  const methods = runInNewContext(`({${methodsSource}})`, {
+    apiFetch: async (url, options) => {
+      bodies.push(JSON.parse(options.body));
+      return { status: 200 };
+    },
+  });
+  const state = {
+    ...methods,
+    config: { streaming_performance_logging: true },
+    tabs: [{ options: { streaming_performance_logging: false } }],
+  };
+  assert.equal(await state.save(), true);
+  assert.deepEqual(bodies[0], { streaming_performance_logging: true });
+  assert.equal(state.config.streaming_performance_logging, true);
+  state.config.streaming_performance_logging = false;
+  assert.equal(await state.save(), true);
+  assert.deepEqual(bodies[1], {});
+  assert.equal(state.config.streaming_performance_logging, false);
+});
+
 test('Apply saves adaptive choices without changing form values and restarts', async () => {
   const requests = [];
   const methods = runInNewContext(`({${methodsSource}})`, {

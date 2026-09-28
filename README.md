@@ -95,6 +95,32 @@ max_bitrate = 80000
 
 Use the local administration page for routine configuration. The application preserves existing configuration and pairing data while you replace the `.app` bundle.
 
+## Latency experiments
+
+The macOS **Configuration → VideoToolbox Encoder** and **Audio/Video** tabs expose
+reversible experimental settings. Existing defaults remain unchanged:
+
+| Setting | Values and default |
+| --- | --- |
+| `vt_low_latency_rate_control` | `inherit` (default) keeps the encoder specification; `auto` removes only the low-latency rate-control request, preserving hardware/software constraints. |
+| `vt_prio_speed` | `inherit` (default), `enabled`, `disabled`. Inherit keeps the existing speed preference enabled. |
+| `vt_power_efficient` | `inherit` (default), `enabled`, `disabled`. Inherit keeps FFmpeg's power-efficiency default. |
+| `vt_coder` | `auto` (default), `cabac`, `cavlc`; applies to H.264. |
+| `macos_capture_queue_depth` | Integer `3..8`, default `4`; applies to new ScreenCaptureKit video capture sessions. |
+
+Compare one variable at a time with the same scene, client, stream settings, and
+network. Apply/restart and start a fresh session for each comparison. Inspect the
+actual `EncoderID` and property readback; a requested option may be unsupported
+or rejected. These settings retain synchronous VideoToolbox output completion
+and do not promise a measured latency improvement.
+
+Enable **Configuration → Advanced → Streaming Performance Logging** for test
+sessions. It defaults to off; macOS release builds include support. Timing,
+aggregation, and log writes add overhead, so use the same logging setting in
+both comparisons and disable it afterward. `capture_to_send` is host-only, not
+end-to-end latency. See the [diagnostic fields and test procedure](docs/streaming-performance-logging.md)
+for p99, cadence measurements, and the consumed-frame definition of `source_fps`.
+
 ## Troubleshooting
 
 | Problem | What to check |

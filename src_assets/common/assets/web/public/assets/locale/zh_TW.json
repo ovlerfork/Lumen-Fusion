@@ -106,6 +106,8 @@
     "working_dir_desc": "這是要傳遞給處理程序的工作目錄。例如，有些應用程式會使用這個目錄來搜尋設定檔。如果沒有設定，Lumina 會自動使用指令所在的目錄"
   },
   "config": {
+    "streaming_performance_logging": "串流效能日誌",
+    "streaming_performance_logging_desc": "會增加計時、統計與日誌寫入開銷。測試時啟用並套用設定、重新啟動，測試結束後關閉。capture_to_send 僅測量主機從擷取到傳送的耗時，不代表端到端延遲。需要建置包含效能日誌支援，macOS 發行建置已包含。",
     "virtual_display": "虛擬顯示器（僅 macOS）",
     "virtual_display_desc": "按需建立用於串流的虛擬顯示器。預設停用。",
     "virtual_display_layout": "虛擬顯示器配置（僅 macOS）",

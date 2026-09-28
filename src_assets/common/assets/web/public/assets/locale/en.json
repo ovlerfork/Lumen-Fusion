@@ -106,6 +106,8 @@
     "working_dir_desc": "The working directory that should be passed to the process. For example, some applications use the working directory to search for configuration files. If not set, Lumina will default to the parent directory of the command"
   },
   "config": {
+    "streaming_performance_logging": "Streaming Performance Logging",
+    "streaming_performance_logging_desc": "Adds timing, aggregation, and log I/O overhead. Enable for a test session, apply and restart, then disable after testing. capture_to_send measures host capture-to-send time only, not end-to-end latency. Requires a build with performance logging support; macOS release builds include it.",
     "virtual_display_layout_extend": "Extend",
     "virtual_display_layout_mirror": "Mirror",
     "virtual_display_layout_system": "Use system setting",
