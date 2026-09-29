@@ -497,7 +497,10 @@ static CGDirectDisplayID addLocalDisplayWithMode(CGPoint origin, BOOL insertBefo
   descriptor.redPrimary = CGPointMake(0.64, 0.33);
   descriptor.greenPrimary = CGPointMake(0.30, 0.60);
   descriptor.bluePrimary = CGPointMake(0.15, 0.06);
-  [descriptor setDispatchQueue:dispatch_get_main_queue()];
+  // The main thread waits synchronously for helper replies while this local
+  // remains online. WindowServer must be able to service its display callbacks
+  // during those waits, just as it does for the helper's own virtual display.
+  [descriptor setDispatchQueue:dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0)];
   CGVirtualDisplaySettings *settings = [[CGVirtualDisplaySettings alloc] init];
   settings.hiDPI = 0;
   settings.modes = @[[[CGVirtualDisplayMode alloc] initWithWidth:width height:height refreshRate:fps]];
