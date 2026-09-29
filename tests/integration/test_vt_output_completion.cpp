@@ -690,11 +690,12 @@ namespace {
   );
 
   class VideoToolboxFrameDelay: public VideoToolboxFixture,
-                                public testing::WithParamInterface<std::tuple<const char *, int>> {
+                                public testing::WithParamInterface<std::tuple<const char *, int, const char *>> {
   protected:
     platf::vt::encode_observation observation;
     VTCompressionSessionRef session = nullptr;
     int previous_delay = config::video.vt.vt_max_frame_delay;
+    std::string previous_selection = config::video.vt.vt_low_latency_rate_control;
 
     void TearDown() override {
       VideoToolboxFixture::TearDown();
@@ -704,6 +705,7 @@ namespace {
         CFRelease(session);
       }
       config::video.vt.vt_max_frame_delay = previous_delay;
+      config::video.vt.vt_low_latency_rate_control = previous_selection;
     }
 
     void report_readback(const char *stage) {
@@ -721,13 +723,14 @@ namespace {
   };
 
   TEST_P(VideoToolboxFrameDelay, RecordsNativeResultAndCompletesFrames) {
-    const auto [codec, delay] = GetParam();
+    const auto [codec, delay, selection] = GetParam();
     const bool hevc = std::string_view(codec) == "hevc_videotoolbox";
     if (!avcodec_find_encoder_by_name(codec) ||
         !VTIsHardwareEncodeSupported(hevc ? kCMVideoCodecType_HEVC : kCMVideoCodecType_H264)) {
       GTEST_SKIP() << "Selected hardware codec unavailable: " << codec;
     }
     config::video.vt.vt_max_frame_delay = delay;
+    config::video.vt.vt_low_latency_rate_control = selection;
     platf::vt::set_encode_observation(&observation);
     platf::vt::set_session_observer([](VTCompressionSessionRef created, void *opaque) {
       auto &target = *static_cast<VideoToolboxFrameDelay *>(opaque);
@@ -742,7 +745,7 @@ namespace {
     ASSERT_TRUE(observation.prepare_observed);
     EXPECT_EQ(observation.setting.requested, delay);
     EXPECT_EQ(observation.setting.setter_status.has_value(), delay >= 0);
-    std::cout << "VT_FRAME_DELAY codec=" << codec << " requested=" << delay
+    std::cout << "VT_FRAME_DELAY codec=" << codec << " selection=" << selection << " requested=" << delay
               << " supported_status=" << observation.setting.supported_status
               << " description=" << observation.setting.supported_description
               << " setter_status=" << (observation.setting.setter_status ? std::to_string(*observation.setting.setter_status) : "unset")
@@ -768,7 +771,7 @@ namespace {
   INSTANTIATE_TEST_SUITE_P(
     NativeFrameDelay,
     VideoToolboxFrameDelay,
-    testing::Combine(testing::Values("h264_videotoolbox", "hevc_videotoolbox"), testing::Values(-1, 0, 1, 2))
+    testing::Combine(testing::Values("h264_videotoolbox", "hevc_videotoolbox"), testing::Values(-1, 0, 1, 2), testing::Values("inherit", "auto"))
   );
 
   TEST(VideoToolboxOutputCompletionErrors, UnopenedContext) {

@@ -100,12 +100,32 @@ extern "C" OSStatus VTCompressionSessionPrepareToEncodeFrames(VTCompressionSessi
   if (!prepare) {
     return kVTInvalidSessionErr;
   }
-  auto setting = platf::vt::apply_max_frame_delay(session, config::video.vt.vt_max_frame_delay);
+  const int requested = config::video.vt.vt_max_frame_delay;
+  auto setting = platf::vt::apply_max_frame_delay(session, requested);
   if (observation) {
     observation->setting = std::move(setting);
     observation->prepare_observed = true;
   }
-  return prepare(session);
+  const OSStatus prepare_status = prepare(session);
+  if (requested >= 0) {
+    CFTypeRef value = nullptr;
+    const OSStatus read_status = VTSessionCopyProperty(session, kVTCompressionPropertyKey_MaxFrameDelayCount, kCFAllocatorDefault, &value);
+    int64_t actual = 0;
+    const bool numeric = read_status == noErr && value && CFGetTypeID(value) == CFNumberGetTypeID() &&
+                         CFNumberGetValue(static_cast<CFNumberRef>(value), kCFNumberSInt64Type, &actual);
+    if (value) {
+      CFRelease(value);
+    }
+    // Readback describes the prepared session; it does not establish setter acceptance.
+    BOOST_LOG(info) << "VideoToolbox MaxFrameDelayCount after prepare: requested=" << requested
+                    << " prepare OSStatus=" << prepare_status << " read OSStatus=" << read_status
+                    << " numeric=" << numeric << " value=" << (numeric ? std::to_string(actual) : "unknown")
+                    << " mismatch=" << (numeric ? (actual != requested ? "true" : "false") : "unknown");
+    if (!numeric || actual != requested) {
+      BOOST_LOG(warning) << "VideoToolbox MaxFrameDelayCount readback is unavailable or differs from requested=" << requested;
+    }
+  }
+  return prepare_status;
 }
 
 extern "C" OSStatus VTCompressionSessionEncodeFrame(
