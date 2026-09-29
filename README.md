@@ -144,6 +144,25 @@ CAVLC and inherited thread QoS. Defaults are 1600×1112, 60 FPS, 20 Mbps,
 30 warmup plus 180 measured frames. Width, height, FPS, bitrate (bits/second),
 warmup, frame count and repeat count can be supplied explicitly.
 
+Use `--max-frame-delay N` to request a delay for all 12 cases, or
+`--suite frame-delay --fps 120 --frames 1000 --warmup 600 --repeat 2` for a
+targeted HEVC auto sweep at -1 (inherit), 0, 1 and 2 frames. These options cannot
+be combined. Setter status and property readback distinguish accepted requests
+from unsupported or rejected requests; measured maxima are not latency guarantees.
+The native CLI supports H.264 and baseline frame-delay experiments separately.
+
+Read existing results, including 0.0.40 JSON, without running the encoder:
+
+```bash
+bash "/Applications/Lumen Fusion.app/Contents/Resources/benchmark-latency.command" --summarize "$HOME/Desktop/Lumen-Fusion-Benchmark.EXAMPLE"
+```
+
+This read-only mode uses macOS `plutil` and needs no installed app. It prints
+requested/actual FPS, measured count, encoder p50/p95/p99/max, preparation and
+wake-lateness maxima, packet-gap maximum, skipped ticks, and separate cold-frame
+and warmup timings. Missing values appear as `N/A`; encoder latency and packet
+intervals are separate columns.
+
 A single comparison can also be run directly, using a new output file prefix:
 
 ```bash
