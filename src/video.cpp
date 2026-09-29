@@ -63,109 +63,6 @@ namespace {
     void *,
     VTCompressionSessionRef *
   );
-
-  void set_videotoolbox_max_frame_delay(VTCompressionSessionRef session) {
-    const int max_frame_delay = config::video.vt.vt_max_frame_delay;
-    if (max_frame_delay < 0) {
-      return;
-    }
-
-    CFDictionaryRef supported_properties = nullptr;
-    OSStatus status = VTSessionCopySupportedPropertyDictionary(session, &supported_properties);
-    if (status != noErr || !supported_properties) {
-      BOOST_LOG(warning)
-        << "Cannot query VideoToolbox properties while applying MaxFrameDelayCount="sv
-        << max_frame_delay << ": OSStatus "sv << status << "; using the encoder default"sv;
-      return;
-    }
-
-    const auto property_description = static_cast<CFDictionaryRef>(CFDictionaryGetValue(
-      supported_properties,
-      kVTCompressionPropertyKey_MaxFrameDelayCount
-    ));
-    if (!property_description || CFGetTypeID(property_description) != CFDictionaryGetTypeID()) {
-      CFRelease(supported_properties);
-      BOOST_LOG(warning)
-        << "VideoToolbox MaxFrameDelayCount="sv << max_frame_delay
-        << " is unsupported by the selected encoder; using the encoder default"sv;
-      return;
-    }
-
-    const auto read_write_status = CFDictionaryGetValue(
-      property_description,
-      kVTPropertyReadWriteStatusKey
-    );
-    const bool read_only = read_write_status && CFEqual(
-      read_write_status,
-      kVTPropertyReadWriteStatus_ReadOnly
-    );
-    CFRelease(supported_properties);
-
-    if (read_only) {
-      BOOST_LOG(warning)
-        << "VideoToolbox MaxFrameDelayCount="sv << max_frame_delay
-        << " cannot be applied because the selected encoder exposes it as read-only; using the encoder default"sv;
-      return;
-    }
-
-    CFNumberRef requested_value = CFNumberCreate(
-      kCFAllocatorDefault,
-      kCFNumberIntType,
-      &max_frame_delay
-    );
-    if (!requested_value) {
-      BOOST_LOG(warning)
-        << "Cannot allocate VideoToolbox MaxFrameDelayCount property value; using the encoder default"sv;
-      return;
-    }
-
-    status = VTSessionSetProperty(
-      session,
-      kVTCompressionPropertyKey_MaxFrameDelayCount,
-      requested_value
-    );
-    CFRelease(requested_value);
-    if (status != noErr) {
-      BOOST_LOG(warning)
-        << "VideoToolbox rejected MaxFrameDelayCount="sv << max_frame_delay
-        << " with OSStatus "sv << status << "; using the encoder default"sv;
-      return;
-    }
-
-    CFTypeRef applied_value = nullptr;
-    status = VTSessionCopyProperty(
-      session,
-      kVTCompressionPropertyKey_MaxFrameDelayCount,
-      kCFAllocatorDefault,
-      &applied_value
-    );
-    if (status != noErr || !applied_value || CFGetTypeID(applied_value) != CFNumberGetTypeID()) {
-      if (applied_value) {
-        CFRelease(applied_value);
-      }
-      BOOST_LOG(warning)
-        << "Cannot verify VideoToolbox MaxFrameDelayCount="sv << max_frame_delay
-        << ": OSStatus "sv << status;
-      return;
-    }
-
-    int actual_value = -1;
-    const bool converted = CFNumberGetValue(
-      static_cast<CFNumberRef>(applied_value),
-      kCFNumberIntType,
-      &actual_value
-    );
-    CFRelease(applied_value);
-
-    if (!converted || actual_value != max_frame_delay) {
-      BOOST_LOG(warning)
-        << "VideoToolbox MaxFrameDelayCount verification mismatch: requested "sv
-        << max_frame_delay << ", actual "sv << actual_value;
-      return;
-    }
-
-    BOOST_LOG(info) << "Applied VideoToolbox MaxFrameDelayCount="sv << actual_value << " from Lumina"sv;
-  }
 }  // namespace
 
 extern "C" OSStatus VTCompressionSessionCreate(
@@ -191,6 +88,7 @@ extern "C" OSStatus VTCompressionSessionCreate(
   const bool automatic = config::video.vt.vt_low_latency_rate_control == "auto";
   BOOST_LOG(info) << "VideoToolbox requested encoder selection=" << (automatic ? "automatic (remove EnableLowLatencyRateControl)" : "inherit");
   CFDictionaryRef adjusted_specification = platf::vt::copy_encoder_specification(encoder_specification, automatic);
+  platf::vt::observe_output_callback(output_callback, output_callback_refcon);
   const OSStatus status = original_create(
     allocator,
     width,
@@ -207,7 +105,6 @@ extern "C" OSStatus VTCompressionSessionCreate(
     CFRelease(adjusted_specification);
   }
   if (status == noErr && compression_session_out && *compression_session_out) {
-    set_videotoolbox_max_frame_delay(*compression_session_out);
     platf::vt::log_encoder_properties(*compression_session_out);
     platf::vt::observe_session(*compression_session_out);
   }

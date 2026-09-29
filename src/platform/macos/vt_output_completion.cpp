@@ -4,6 +4,7 @@
  */
 #include "vt_output_completion.h"
 
+#include <chrono>
 #include <dlfcn.h>
 #include <string_view>
 
@@ -12,9 +13,16 @@ extern "C" {
 #include <libavutil/opt.h>
 }
 
+#include "src/config.h"
 #include "src/logging.h"
 
 namespace {
+  thread_local platf::vt::encode_observation *observation = nullptr;
+  int64_t observation_time_ns() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count();
+  }
+
   struct completion_scope;
   thread_local completion_scope *active_completion = nullptr;
   thread_local platf::vt::session_observer session_created = nullptr;
@@ -85,6 +93,21 @@ extern "C" OSStatus VTSessionSetProperty(VTSessionRef session, CFStringRef key, 
   return status;
 }
 
+extern "C" OSStatus VTCompressionSessionPrepareToEncodeFrames(VTCompressionSessionRef session) {
+  static const auto prepare = reinterpret_cast<decltype(&VTCompressionSessionPrepareToEncodeFrames)>(
+    dlsym(RTLD_NEXT, "VTCompressionSessionPrepareToEncodeFrames")
+  );
+  if (!prepare) {
+    return kVTInvalidSessionErr;
+  }
+  auto setting = platf::vt::apply_max_frame_delay(session, config::video.vt.vt_max_frame_delay);
+  if (observation) {
+    observation->setting = std::move(setting);
+    observation->prepare_observed = true;
+  }
+  return prepare(session);
+}
+
 extern "C" OSStatus VTCompressionSessionEncodeFrame(
   VTCompressionSessionRef session,
   CVImageBufferRef image_buffer,
@@ -101,7 +124,24 @@ extern "C" OSStatus VTCompressionSessionEncodeFrame(
     return kVTInvalidSessionErr;
   }
 
+  if (observation) {
+    ++observation->submitted;
+  }
   const OSStatus status = encode(session, image_buffer, presentation_timestamp, duration, frame_properties, source_frame_refcon, info_flags_out);
+  if (observation) {
+    const int64_t returned_ns = observation_time_ns();
+    // Snapshot immediately after the native call, before forced completion.
+    // A concurrent callback may finish at this observation boundary.
+    size_t completed = observation->completed.load(std::memory_order_acquire);
+    // With one outstanding submission, exclude a callback that finished after
+    // the return timestamp. A not-yet-published completion is conservatively pending.
+    if (completed == observation->submitted && observation->last_callback_ns.load(std::memory_order_acquire) > returned_ns) {
+      --completed;
+    }
+    observation->pending_at_return = observation->submitted - completed;
+    observation->callback_completed_at_return = completed == observation->submitted;
+    observation->encode_status = status;
+  }
   if (status == noErr && active_completion) {
     // This blocks in the driver; there is no cancellable timeout. No callback
     // locks are held. A numeric PTS completes this submission without draining EOS.
@@ -120,6 +160,69 @@ extern "C" OSStatus VTCompressionSessionEncodeFrame(
 }
 
 namespace platf::vt {
+  void set_encode_observation(encode_observation *value) {
+    observation = value;
+  }
+
+  void observe_output_callback(VTCompressionOutputCallback &callback, void *&opaque) {
+    if (!observation || !callback) {
+      return;
+    }
+    observation->callback = callback;
+    observation->callback_opaque = opaque;
+    opaque = observation;
+    callback = [](void *context, void *source, OSStatus status, VTEncodeInfoFlags flags, CMSampleBufferRef buffer) {
+      auto &state = *static_cast<encode_observation *>(context);
+      state.callback(state.callback_opaque, source, status, flags, buffer);
+      state.last_callback_ns.store(observation_time_ns(), std::memory_order_release);
+      state.completed.fetch_add(1, std::memory_order_release);
+    };
+  }
+
+  frame_delay_setting apply_max_frame_delay(VTCompressionSessionRef session, int requested) {
+    frame_delay_setting result;
+    result.requested = requested;
+    // Production inherit does not query or write the property.
+    if (requested < 0 && !observation) {
+      return result;
+    }
+    CFDictionaryRef supported = nullptr;
+    result.supported_status = VTSessionCopySupportedPropertyDictionary(session, &supported);
+    if (supported) {
+      const auto description = CFDictionaryGetValue(supported, kVTCompressionPropertyKey_MaxFrameDelayCount);
+      if (description) {
+        CFStringRef text = CFCopyDescription(description);
+        if (text) {
+          const CFIndex capacity = CFStringGetMaximumSizeForEncoding(CFStringGetLength(text), kCFStringEncodingUTF8) + 1;
+          std::string utf8(capacity, '\0');
+          if (CFStringGetCString(text, utf8.data(), capacity, kCFStringEncodingUTF8)) {
+            utf8.resize(std::char_traits<char>::length(utf8.c_str()));
+            result.supported_description = std::move(utf8);
+          }
+          CFRelease(text);
+        }
+      }
+      CFRelease(supported);
+    }
+    if (requested >= 0) {
+      CFNumberRef value = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &requested);
+      if (value) {
+        // Record the real setter status even if the support dictionary omits the key.
+        result.setter_status = VTSessionSetProperty(session, kVTCompressionPropertyKey_MaxFrameDelayCount, value);
+        CFRelease(value);
+        if (*result.setter_status != noErr) {
+          BOOST_LOG(warning) << "VideoToolbox rejected MaxFrameDelayCount=" << requested
+                             << " with OSStatus " << *result.setter_status << " before prepare";
+        } else {
+          BOOST_LOG(info) << "VideoToolbox accepted MaxFrameDelayCount=" << requested << " before prepare";
+        }
+      } else {
+        BOOST_LOG(warning) << "Cannot allocate VideoToolbox MaxFrameDelayCount value";
+      }
+    }
+    return result;
+  }
+
   void set_session_observer(session_observer observer, void *opaque) {
     session_created = observer;
     session_observer_opaque = opaque;

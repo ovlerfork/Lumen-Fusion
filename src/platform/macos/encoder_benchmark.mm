@@ -60,6 +60,7 @@ namespace {
     int frames = 180;
     int warmup = 30;
     int repeat = 1;
+    int max_frame_delay = -1;
     bool paced = true;
     bool user_initiated = true;
     bool automatic = false;
@@ -122,6 +123,8 @@ namespace {
         o.frames = integer(value, 2, 10000, name);
       } else if (name == "--warmup") {
         o.warmup = integer(value, 0, 1000, name);
+      } else if (name == "--max-frame-delay") {
+        o.max_frame_delay = integer(value, -1, std::numeric_limits<int>::max(), name);
       } else if (name == "--repeat") {
         o.repeat = integer(value, 1, 100, name);
       } else {
@@ -175,11 +178,15 @@ namespace {
     double receipt = 0;
     double loop_exit = 0;
     size_t backlog = 0;
+    size_t native_pending_at_return = 0;
+    bool callback_completed_at_return = false;
+    OSStatus native_encode_status = noErr;
     bool idr_requested = false;
     bool key_nal = false;
   };
 
   struct encoder {
+    platf::vt::encode_observation observation;
     AVCodecContext *context = nullptr;
     AVFrame *frame = nullptr;
     AVPacket *packet = nullptr;
@@ -192,6 +199,7 @@ namespace {
       av_frame_free(&frame);
       av_packet_free(&packet);
       avcodec_free_context(&context);
+      platf::vt::set_encode_observation(nullptr);
       av_dict_free(&dictionary);
       if (session) {
         CFRelease(session);
@@ -269,6 +277,7 @@ namespace {
       CFRetain(session);
       target.session = session;
     }, &e);
+    platf::vt::set_encode_observation(&e.observation);
     const auto started = clock_type::now();
     const int status = avcodec_open2(ctx, codec, &e.dictionary);
     const double elapsed = std::chrono::duration<double, std::milli>(clock_type::now() - started).count();
@@ -276,8 +285,22 @@ namespace {
     check(status, "avcodec_open2");
     require(av_dict_count(e.dictionary) == 0, "Encoder left unconsumed options");
     require(e.session, "Native session observer did not see the encoder session");
+    require(e.observation.prepare_observed, "Native prepare observer did not see the encoder session");
     return {
       {"open_ms", elapsed},
+      {"max_frame_delay", {
+        {"requested", o.max_frame_delay},
+        {"application_stage", "before_PrepareToEncodeFrames"},
+        {"prepare_observed", e.observation.prepare_observed},
+        {"supported_dictionary_status", e.observation.setting.supported_status},
+        {"supported_property_description", e.observation.setting.supported_description},
+        {"setter_status", e.observation.setting.setter_status ? json(*e.observation.setting.setter_status) : json(nullptr)},
+        {"setter_result", o.max_frame_delay < 0 ? "inherit_unset" :
+          !e.observation.setting.setter_status ? "not_attempted" :
+          *e.observation.setting.setter_status == noErr ? "accepted" :
+          *e.observation.setting.setter_status == kVTPropertyNotSupportedErr ? "unsupported" : "rejected"},
+        {"after_open", property(e.session, kVTCompressionPropertyKey_MaxFrameDelayCount)}
+      }},
       {"EncoderID", property(e.session, kVTCompressionPropertyKey_EncoderID)},
       {"UsingHardwareAcceleratedVideoEncoder", property(e.session, kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder)},
       {"PrioritizeEncodingSpeedOverQuality", property(e.session, CFSTR("PrioritizeEncodingSpeedOverQuality"))},
@@ -448,7 +471,12 @@ namespace {
       s.send_enter = now_ms();
       const int sent = platf::vt::send_frame(e.context, e.frame);
       s.send_exit = now_ms();
+      s.native_pending_at_return = e.observation.pending_at_return;
+      s.callback_completed_at_return = e.observation.callback_completed_at_return;
+      s.native_encode_status = e.observation.encode_status;
       check(sent, "send_frame");
+      require(e.observation.submitted == i + 1 && e.observation.completed.load() == i + 1,
+              "Native submission/callback observation count mismatch");
       ++submitted;
       const int result = receive();
       if (result != AVERROR(EAGAIN)) {
@@ -487,16 +515,22 @@ namespace {
             {"p95", percentile(0.95)}, {"p99", percentile(0.99)}, {"max", values.back()}};
   }
 
-  json summary(const std::vector<sample> &samples, size_t begin, size_t end, bool paced) {
+  json summary(const std::vector<sample> &samples, size_t begin, size_t end, bool paced, int fps) {
     std::vector<double> prep, send, latency, sleep, lateness, outside_wait, outside_loop, interarrival;
     int64_t skipped = 0;
     size_t bytes = 0;
     size_t keyframes = 0;
+    size_t over_budget = 0;
+    size_t callbacks_at_return = 0;
+    size_t max_native_pending = 0;
     for (size_t i = begin; i < end; ++i) {
       const auto &s = samples[i];
       prep.push_back(s.prep_exit - s.prep_enter);
       send.push_back(s.send_exit - s.send_enter);
       latency.push_back(s.receipt - s.send_enter);
+      over_budget += s.receipt - s.send_enter > 1000.0 / fps;
+      callbacks_at_return += s.callback_completed_at_return;
+      max_native_pending = std::max(max_native_pending, s.native_pending_at_return);
       if (paced) {
         sleep.push_back(s.wake - s.sleep_enter);
         lateness.push_back(std::max(0.0, s.wake - s.deadline));
@@ -514,6 +548,9 @@ namespace {
     const double interval_ms = count > 1 ? samples[end - 1].receipt - samples[begin].receipt : 0;
     const double active_ms = count ? samples[end - 1].receipt - samples[begin].prep_enter : 0;
     return {
+      {"frame_budget_ms", 1000.0 / fps}, {"submit_to_output_over_budget_count", over_budget},
+      {"callbacks_completed_at_native_return", callbacks_at_return},
+      {"max_native_pending_at_return", max_native_pending},
       {"submitted", count}, {"matched_packets", count}, {"bytes", bytes}, {"keyframes", keyframes},
       {"skipped_ticks_before_submissions", skipped}, {"final_backlog", count ? samples[end - 1].backlog : 0},
       {"actual_fps", interval_ms > 0 ? json((count - 1) * 1000.0 / interval_ms) : json(nullptr)},
@@ -559,7 +596,7 @@ namespace {
                      {"frames", o.frames}, {"warmup", o.warmup}, {"repeat", o.repeat}, {"paced", o.paced},
                      {"variant", o.variant}, {"vt_low_latency_rate_control", o.automatic ? "auto" : "inherit"},
                      {"vt_prio_speed", o.speed}, {"vt_power_efficient", o.power}, {"vt_coder", o.coder},
-                     {"max_frame_delay", -1}, {"max_b_frames", 0}, {"allow_sw", 0}, {"require_sw", 0}, {"realtime", 1},
+                     {"max_frame_delay", o.max_frame_delay}, {"max_b_frames", 0}, {"allow_sw", 0}, {"require_sw", 0}, {"realtime", 1},
                      {"output_completion", true}, {"pixel_format", "NV12"}, {"color", "BT709 video range"}}},
       {"content", "four synthetic backgrounds and moving luma block; scene, motion, PTS and key requests use submission index"},
       {"time_units", "milliseconds relative to the first pacing tick; PTS/DTS in 1/fps"},
@@ -567,14 +604,17 @@ namespace {
       {"rate_definitions", "actual_fps=(packets-1)/(last-first receipt); bitrate=bytes*8/(last receipt-first prep entry)"},
       {"wait_definitions", "outside_send_wait spans previous send exit to next send entry; outside_loop_wait spans previous loop exit to next prep entry"},
       {"skipped_tick_definition", "all omitted ticks, including ticks missed before sleep and during late wake, assigned to following submission"},
+      {"max_frame_delay_contract", "M counts frames: EncodeFrame(N) must emit N-M before returning; 0 differs from 1 and is not zero milliseconds; -1 inherits"},
+      {"native_return_observation", "FFmpeg callback completion observed immediately after native EncodeFrame returns, before CompleteFrames; one outstanding submission; callback timestamp must precede the return observation; publication races conservatively count as pending; pending includes errors/drops and is an upper bound at that boundary"},
+      {"maximum_interpretation", "sample maximum with forced completion enabled, not a guaranteed latency bound or an unconstrained property-only queue bound"},
       {"decoder_validation", "not_run"}
     };
   }
 
   void write_results(const options &o, int run, json report, const std::vector<sample> &samples) {
     report["repeat_index"] = run;
-    report["warmup"] = summary(samples, 0, o.warmup, o.paced);
-    report["measured"] = summary(samples, o.warmup, samples.size(), o.paced);
+    report["warmup"] = summary(samples, 0, o.warmup, o.paced, o.fps);
+    report["measured"] = summary(samples, o.warmup, samples.size(), o.paced, o.fps);
     report["cold_first_frame"] = {{"included_in", o.warmup ? "warmup" : "measured"},
                                    {"prep_ms", samples[0].prep_exit - samples[0].prep_enter},
                                    {"send_ms", samples[0].send_exit - samples[0].send_enter},
@@ -584,7 +624,7 @@ namespace {
     report["columns"] = {
       "index", "phase", "cold", "tick", "scheduled_tick", "skipped_ticks", "deadline_ms", "sleep_enter_ms", "wake_ms", "lateness_ms",
       "prep_enter_ms", "prep_exit_ms", "send_enter_ms", "send_exit_ms", "packet_receipt_ms", "loop_exit_ms",
-      "pts", "dts", "key_requested", "key_flag", "key_nal", "bytes", "backlog"
+      "pts", "dts", "key_requested", "key_flag", "key_nal", "bytes", "backlog", "native_encode_status", "callback_completed_at_native_return", "native_pending_at_return"
     };
     report["rows"] = json::array();
     for (size_t i = 0; i < samples.size(); ++i) {
@@ -595,7 +635,7 @@ namespace {
         s.sleep_enter, s.wake, o.paced ? json(std::max(0.0, s.wake - s.deadline)) : json(nullptr),
         s.prep_enter, s.prep_exit, s.send_enter, s.send_exit, s.receipt, s.loop_exit,
         s.packet->pts, s.packet->dts == AV_NOPTS_VALUE ? json(nullptr) : json(s.packet->dts),
-        s.idr_requested, bool(s.packet->flags & AV_PKT_FLAG_KEY), s.key_nal, s.packet->size, s.backlog
+        s.idr_requested, bool(s.packet->flags & AV_PKT_FLAG_KEY), s.key_nal, s.packet->size, s.backlog, s.native_encode_status, s.callback_completed_at_return, s.native_pending_at_return
       }));
     }
     const auto prefix = o.output.string() + "-r" + std::to_string(run);
@@ -661,6 +701,12 @@ namespace {
     std::cout << "Encoder benchmark: " << prefix << ".{csv,json}; matched=" << o.frames
               << " encode_ms_p50=" << report["measured"]["submit_to_output_ms"]["p50"]
               << " encode_ms_p95=" << report["measured"]["submit_to_output_ms"]["p95"]
+              << " encode_ms_p99=" << report["measured"]["submit_to_output_ms"]["p99"]
+              << " encode_ms_max=" << report["measured"]["submit_to_output_ms"]["max"]
+              << " over_frame_budget=" << report["measured"]["submit_to_output_over_budget_count"]
+              << " callbacks_at_native_return=" << report["measured"]["callbacks_completed_at_native_return"]
+              << " max_native_pending_at_return=" << report["measured"]["max_native_pending_at_return"]
+              << " max_frame_delay=" << report["encoder"]["max_frame_delay"]
               << " actual_fps=" << report["measured"]["actual_fps"]
               << "; decoder_validation=" << report["decoder_validation"]["status"] << '\n';
   }
@@ -677,6 +723,7 @@ namespace platf::vt {
                        "  --width N --height N             default 1600 x 1112, even, 64..4096\n"
                        "  --fps N --bitrate N              default 60 Hz, 20000000 bits/sec\n"
                        "  --frames N --warmup N --repeat N default 180 / 30 / 1\n"
+                       "  --max-frame-delay N              -1 inherit (default), or nonnegative frame count\n"
                        "  --variant baseline|auto|auto-poweroff|speedoff|h264-cavlc\n"
                        "  --paced | --unpaced              default paced\n"
                        "  --qos inherit|user-initiated      default user-initiated (matches streaming)\n"
@@ -693,7 +740,7 @@ namespace platf::vt {
         av_log_set_level(AV_LOG_ERROR);
         // Only this isolated process uses these values; no configuration is loaded.
         config::video.vt.vt_low_latency_rate_control = o.automatic ? "auto" : "inherit";
-        config::video.vt.vt_max_frame_delay = -1;
+        config::video.vt.vt_max_frame_delay = o.max_frame_delay;
         if (o.user_initiated) {
           require(pthread_set_qos_class_self_np(QOS_CLASS_USER_INITIATED, 0) == 0, "Cannot set USER_INITIATED QoS");
         }
@@ -710,6 +757,7 @@ namespace platf::vt {
           }
           report["setup_ms_including_open"] = std::chrono::duration<double, std::milli>(clock_type::now() - setup_started).count();
           measure(e, o, scenes, samples);
+          report["encoder"]["max_frame_delay"]["after_run"] = property(e.session, kVTCompressionPropertyKey_MaxFrameDelayCount);
           std::vector<benchmark::packet_view> packets;
           packets.reserve(samples.size());
           for (const auto &s : samples) {

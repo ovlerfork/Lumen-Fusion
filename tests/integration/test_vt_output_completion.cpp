@@ -14,6 +14,7 @@
 #include <limits>
 #include <map>
 #include <optional>
+#include <string_view>
 #include <thread>
 #include <tuple>
 #include <vector>
@@ -25,6 +26,7 @@ extern "C" {
 #include <libavutil/opt.h>
 }
 
+#include "src/config.h"
 #include "src/platform/macos/vt_output_completion.h"
 
 namespace {
@@ -685,6 +687,88 @@ namespace {
     NativePaced,
     VideoToolboxPacedMeasurement,
     testing::Values("h264_videotoolbox", "hevc_videotoolbox")
+  );
+
+  class VideoToolboxFrameDelay: public VideoToolboxFixture,
+                                public testing::WithParamInterface<std::tuple<const char *, int>> {
+  protected:
+    platf::vt::encode_observation observation;
+    VTCompressionSessionRef session = nullptr;
+    int previous_delay = config::video.vt.vt_max_frame_delay;
+
+    void TearDown() override {
+      VideoToolboxFixture::TearDown();
+      platf::vt::set_encode_observation(nullptr);
+      platf::vt::set_session_observer(nullptr, nullptr);
+      if (session) {
+        CFRelease(session);
+      }
+      config::video.vt.vt_max_frame_delay = previous_delay;
+    }
+
+    void report_readback(const char *stage) {
+      CFTypeRef value = nullptr;
+      const OSStatus status = VTSessionCopyProperty(session, kVTCompressionPropertyKey_MaxFrameDelayCount, kCFAllocatorDefault, &value);
+      int64_t number = 0;
+      const bool numeric = value && CFGetTypeID(value) == CFNumberGetTypeID() &&
+                           CFNumberGetValue(static_cast<CFNumberRef>(value), kCFNumberSInt64Type, &number);
+      std::cout << "VT_FRAME_DELAY " << stage << " read_status=" << status
+                << " numeric=" << numeric << " value=" << (numeric ? std::to_string(number) : "unknown") << '\n';
+      if (value) {
+        CFRelease(value);
+      }
+    }
+  };
+
+  TEST_P(VideoToolboxFrameDelay, RecordsNativeResultAndCompletesFrames) {
+    const auto [codec, delay] = GetParam();
+    const bool hevc = std::string_view(codec) == "hevc_videotoolbox";
+    if (!avcodec_find_encoder_by_name(codec) ||
+        !VTIsHardwareEncodeSupported(hevc ? kCMVideoCodecType_HEVC : kCMVideoCodecType_H264)) {
+      GTEST_SKIP() << "Selected hardware codec unavailable: " << codec;
+    }
+    config::video.vt.vt_max_frame_delay = delay;
+    platf::vt::set_encode_observation(&observation);
+    platf::vt::set_session_observer([](VTCompressionSessionRef created, void *opaque) {
+      auto &target = *static_cast<VideoToolboxFrameDelay *>(opaque);
+      if (target.session) {
+        CFRelease(target.session);
+      }
+      target.session = created;
+      CFRetain(created);
+    }, this);
+    ASSERT_NO_FATAL_FAILURE(initialize(codec));
+    ASSERT_NE(session, nullptr);
+    ASSERT_TRUE(observation.prepare_observed);
+    EXPECT_EQ(observation.setting.requested, delay);
+    EXPECT_EQ(observation.setting.setter_status.has_value(), delay >= 0);
+    std::cout << "VT_FRAME_DELAY codec=" << codec << " requested=" << delay
+              << " supported_status=" << observation.setting.supported_status
+              << " description=" << observation.setting.supported_description
+              << " setter_status=" << (observation.setting.setter_status ? std::to_string(*observation.setting.setter_status) : "unset")
+              << std::endl;
+    // Unsupported/rejected is an observation, never converted into acceptance.
+    report_readback("after_open");
+    for (int index = 0; index < 3; ++index) {
+      ASSERT_NO_FATAL_FAILURE(prepare_frame(index, index == 0));
+      ASSERT_EQ(platf::vt::send_frame(context, frame), 0);
+      EXPECT_EQ(observation.encode_status, noErr);
+      EXPECT_LE(observation.pending_at_return, 1u);
+      EXPECT_EQ(observation.callback_completed_at_return, observation.pending_at_return == 0);
+      EXPECT_EQ(observation.completed.load(), static_cast<size_t>(index + 1));
+      ASSERT_EQ(avcodec_receive_packet(context, packet), 0);
+      EXPECT_EQ(packet->pts, index);
+      EXPECT_GT(packet->size, 0);
+      av_packet_unref(packet);
+      EXPECT_EQ(avcodec_receive_packet(context, packet), AVERROR(EAGAIN));
+    }
+    report_readback("after_run");
+  }
+
+  INSTANTIATE_TEST_SUITE_P(
+    NativeFrameDelay,
+    VideoToolboxFrameDelay,
+    testing::Combine(testing::Values("h264_videotoolbox", "hevc_videotoolbox"), testing::Values(-1, 0, 1, 2))
   );
 
   TEST(VideoToolboxOutputCompletionErrors, UnopenedContext) {
