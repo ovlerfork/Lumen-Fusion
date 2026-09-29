@@ -497,9 +497,7 @@ static CGDirectDisplayID addLocalDisplayWithMode(CGPoint origin, BOOL insertBefo
   descriptor.redPrimary = CGPointMake(0.64, 0.33);
   descriptor.greenPrimary = CGPointMake(0.30, 0.60);
   descriptor.bluePrimary = CGPointMake(0.15, 0.06);
-  // The main thread waits synchronously for helper replies while this local
-  // remains online. WindowServer must be able to service its display callbacks
-  // during those waits, just as it does for the helper's own virtual display.
+  // Fixture callbacks remain independent of the synchronous lifecycle worker.
   [descriptor setDispatchQueue:dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0)];
   CGVirtualDisplaySettings *settings = [[CGVirtualDisplaySettings alloc] init];
   settings.hiDPI = 0;
@@ -617,13 +615,8 @@ static void crashCase(char *executable, BOOL stoppedHelper) {
   require(helperExited, "EOF helper finishes restoration and exits before forced cleanup");
 }
 
-int main(int argc, char **argv) {
+static int runLifecycle(int argc, char **argv) {
   @autoreleasepool {
-    const char *githubActions = getenv("GITHUB_ACTIONS");
-    require(githubActions && !strcmp(githubActions, "true"),
-            "test requires a disposable GitHub Actions macOS session");
-    require([[NSProcessInfo processInfo] isOperatingSystemAtLeastVersion:(NSOperatingSystemVersion){14, 0, 0}],
-            "test requires macOS 14 or newer");
     signal(SIGCHLD, SIG_DFL);
     if (argc == 2 && !strcmp(argv[1], "--crash-parent")) {
       // The managed helper inherits this descriptor even though its stdout is
@@ -645,8 +638,6 @@ int main(int argc, char **argv) {
     require(sysctlbyname("hw.model", model, &modelSize, NULL, 0) == 0 && model[0],
             "hardware model required for native mirror admission coverage");
     BOOL mirrorBlocked = vd_model_is_virtual_mac(model);
-    [NSApplication sharedApplication];
-    [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
     CGDirectDisplayID originalMain = CGMainDisplayID();
     CGDirectDisplayID displays[64];
     CGRect bounds[64];
@@ -1033,6 +1024,26 @@ int main(int argc, char **argv) {
     require(waitForRemoval(replacement), "replacement fixture released");
     require(waitForMain(originalMain), "original main remains after fixture cleanup");
     puts("PASS: native helper reuse, layouts, mode replacement, cleanup, reap, parent crash, local replacement, system-only arrangement");
+  }
+  return 0;
+}
+
+int main(int argc, char **argv) {
+  @autoreleasepool {
+    const char *githubActions = getenv("GITHUB_ACTIONS");
+    require(githubActions && !strcmp(githubActions, "true"),
+            "test requires a disposable GitHub Actions macOS session");
+    require([[NSProcessInfo processInfo] isOperatingSystemAtLeastVersion:(NSOperatingSystemVersion){14, 0, 0}],
+            "test requires macOS 14 or newer");
+    [NSApplication sharedApplication];
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
+    // Keep AppKit's main run loop responsive while the lifecycle worker owns
+    // fixtures and waits for helper replies, display changes, and child exit.
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+      int result = runLifecycle(argc, argv);
+      dispatch_async(dispatch_get_main_queue(), ^{ exit(result); });
+    });
+    [NSApp run];
   }
   return 0;
 }
