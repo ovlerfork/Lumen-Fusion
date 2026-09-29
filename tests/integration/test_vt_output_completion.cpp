@@ -724,22 +724,17 @@ namespace {
 
   TEST_P(VideoToolboxFrameDelay, RecordsNativeResultAndCompletesFrames) {
     const auto [codec, delay, selection] = GetParam();
-    const bool hevc = std::string_view(codec) == "hevc_videotoolbox";
-    if (!avcodec_find_encoder_by_name(codec) ||
-        !VTIsHardwareEncodeSupported(hevc ? kCMVideoCodecType_HEVC : kCMVideoCodecType_H264)) {
-      GTEST_SKIP() << "Selected hardware codec unavailable: " << codec;
-    }
     config::video.vt.vt_max_frame_delay = delay;
     config::video.vt.vt_low_latency_rate_control = selection;
     platf::vt::set_encode_observation(&observation);
     platf::vt::set_session_observer([](VTCompressionSessionRef created, void *opaque) {
-      auto &target = *static_cast<VideoToolboxFrameDelay *>(opaque);
-      if (target.session) {
-        CFRelease(target.session);
+      auto &target = *static_cast<VTCompressionSessionRef *>(opaque);
+      if (target) {
+        CFRelease(target);
       }
-      target.session = created;
+      target = created;
       CFRetain(created);
-    }, this);
+    }, &session);
     ASSERT_NO_FATAL_FAILURE(initialize(codec));
     ASSERT_NE(session, nullptr);
     ASSERT_TRUE(observation.prepare_observed);
