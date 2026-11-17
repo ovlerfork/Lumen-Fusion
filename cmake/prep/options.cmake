@@ -9,7 +9,7 @@ set(SUNSHINE_PUBLISHER_ISSUE_URL "https://github.com/jayl-dev/Lumina/issues"
 
 option(BUILD_DOCS "Build documentation" ON)
 option(BUILD_TESTS "Build tests" ON)
-option(NPM_OFFLINE "Use offline npm packages. You must ensure packages are in your npm cache." OFF)
+option(PNPM_OFFLINE "Use offline pnpm packages. You must ensure packages are in your pnpm store." OFF)
 
 option(BUILD_WERROR "Enable -Werror flag." OFF)
 

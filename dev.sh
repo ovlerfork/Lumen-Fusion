@@ -25,7 +25,7 @@ cmake -S . -B build \
   -DCMAKE_PREFIX_PATH="$(brew --prefix qtbase);$(brew --prefix qtsvg)" \
   -DQt6Svg_DIR="$(brew --prefix qtsvg)/lib/cmake/Qt6Svg" \
   -DLUMINA_ENABLE_STREAM_PERF_LOGGING="$lumina_perf_logging"
-npm run build-clean
+pnpm run build-clean
 cmake --build build --target sunshine vd_helper --parallel 4
 
 INSTALL_DIR="$HOME/.local/share/lumina"
